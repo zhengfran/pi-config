@@ -10,7 +10,7 @@
 > `npm run check` there passes clean — use it as the reference implementation.
 >
 > Audience: the agents migrating `firecrawl-search`, `ask-user`, `git-info`,
-> `ui-customization`, and `copy-all`.
+> and `copy-all`.
 
 ---
 
@@ -27,10 +27,10 @@ Reach for Effect only where you actually get something from it:
   timeouts, retries/polling, or a resource whose lifetime must outlive one call
   (child process, subscription) → child processes (`git-info`, `copy-all`), the
   Firecrawl SDK calls (`firecrawl-search`), git/gh polling (`git-info`).
-- **No / barely:** pure TUI popups and rendering (`ask-user`, `ui-customization`).
-  These are synchronous or already-Promise UI code; wrapping them in Effect adds ceremony
-  and no safety. Migrate them by keeping the logic and only touching whatever genuinely
-  async part benefits (usually nothing).
+- **No / barely:** pure TUI popups such as `ask-user`. These are synchronous or
+  already-Promise UI code; wrapping them in Effect adds ceremony and no safety. Migrate
+  them by keeping the logic and only touching whatever genuinely async part benefits
+  (usually nothing).
 
 If an extension has no async core worth typing, the "migration" may be just adopting the
 toolchain (§1) and leaving the body plain. Don't invent an Effect layer to have one.
@@ -296,15 +296,13 @@ Migrate it only for consistency; if you do, `Effect.callback` around `child.once
 
 ---
 
-## 6. Recipe: UI popups & rendering (ask-user, ui-customization)
+## 6. Recipe: UI popups (ask-user)
 
-These are the "leave it mostly plain" cases.
+This is a "leave it mostly plain" case.
 
-- `ask-user` is a TUI popup that resolves a Promise when the user picks. That Promise already
-  models the one async thing. Effect adds nothing; if you want uniformity, wrap the final
-  await in `Effect.tryPromise` at the boundary and stop there. Do **not** build a service.
-- `ui-customization` is a renderer / event bookkeeper driven by `pi.on(...)` and the
-  git-info channel in `shared/dashboard-state.ts`. State and formatting stay synchronous TS.
+`ask-user` is a TUI popup that resolves a Promise when the user picks. That Promise already
+models the one async thing. Effect adds nothing; if you want uniformity, wrap the final
+await in `Effect.tryPromise` at the boundary and stop there. Do **not** build a service.
 
 The migration bar for these: adopt the toolchain (§1) so they typecheck under TS7 + the
 Effect LS, and only touch runtime code that has a real async/resource concern.
