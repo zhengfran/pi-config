@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Installed separately by zzc-skills; these links are machine-local
+skills/
+
 # Downloaded/generated executables (file-search fallback binaries)
 bin/
 
@@ -14,8 +17,8 @@ models-store.json
 npm/
 git/
 
-# settings.json is tracked here on purpose: this directory IS the dotfiles
-# copy of ~/.pi/agent, so the settings are config, not runtime state.
+# settings.json is tracked on purpose: this repository is the portable
+# configuration linked at ~/.pi/agent; runtime and private state stay ignored.
 !settings.json
 
 # Environment variables and secrets

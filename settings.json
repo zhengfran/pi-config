@@ -16,10 +16,10 @@
     "anthropicExtraUsage": true
   },
   "externalEditor": "nvim",
-  "lastChangelogVersion": "0.83.0",
+  "lastChangelogVersion": "0.84.3",
   "defaultProvider": "github-copilot",
   "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-web-access@0.15.0",
     "git:github.com/zhengfran/pi-subscription-usage"
