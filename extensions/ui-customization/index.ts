@@ -13,12 +13,9 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   emptyGitInfoState,
-  emptyModelInfoState,
   GIT_INFO_CHANNEL,
-  MODEL_INFO_CHANNEL,
   REFRESH_CHANNEL,
   isGitInfoState,
-  isModelInfoState,
 } from "../shared/dashboard-state.ts";
 
 type Rgb = [number, number, number];
@@ -146,12 +143,6 @@ function hideThemesSection(component: RenderableNode) {
   return false;
 }
 
-function formatTokens(tokens: number) {
-  if (tokens < 1_000) return `${tokens}`;
-  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
-  return `${(tokens / 1_000_000).toFixed(1)}m`;
-}
-
 function formatDirectory(cwd: string) {
   const home = homedir();
   if (cwd === home) return "~";
@@ -186,17 +177,10 @@ function columns(left: string, right: string, width: number) {
 
 export default function uiCustomization(pi: ExtensionAPI) {
   let title = "pi";
-  let modelInfo = emptyModelInfoState();
   let gitInfo = emptyGitInfoState();
   let requestRender: (() => void) | undefined;
   let activeTui: DashboardTui | undefined;
   let themeRemovalTimers: Array<ReturnType<typeof setTimeout>> = [];
-
-  const stopModelListener = pi.events.on(MODEL_INFO_CHANNEL, (value) => {
-    if (!isModelInfoState(value)) return;
-    modelInfo = value;
-    requestRender?.();
-  });
 
   const stopGitListener = pi.events.on(GIT_INFO_CHANNEL, (value) => {
     if (!isGitInfoState(value)) return;
@@ -260,29 +244,9 @@ export default function uiCustomization(pi: ExtensionAPI) {
             git += ` · ${linkedPr}`;
           }
 
-          const contextPercent =
-            modelInfo.contextPercent === null
-              ? "?"
-              : `${Math.round(modelInfo.contextPercent)}`;
-          const contextWindow =
-            modelInfo.contextWindow > 0
-              ? formatTokens(modelInfo.contextWindow)
-              : "?";
-          const tps =
-            modelInfo.tokensPerSecond === null
-              ? "— tok/s"
-              : `${Math.round(modelInfo.tokensPerSecond)} tok/s`;
-          const usage = `${contextPercent}%/${contextWindow} · $${modelInfo.cost.toFixed(2)} · ${tps}`;
-          const model = modelInfo.provider
-            ? `${modelInfo.provider}/${modelInfo.modelId} · ${modelInfo.thinking}`
-            : modelInfo.modelId;
+          const lines = [columns(directory, theme.fg("muted", git), width)];
 
-          const lines = [
-            columns(directory, theme.fg("muted", model), width),
-            columns(theme.fg("muted", usage), theme.fg("muted", git), width),
-          ];
-
-          // Extension statuses render after the two dashboard lines, one per row.
+          // Extension statuses render after the dashboard line, one per row.
           const statuses = footerData.getExtensionStatuses();
           const statusLines = Array.from(statuses.entries())
             .sort(([a], [b]) => a.localeCompare(b))
@@ -304,7 +268,6 @@ export default function uiCustomization(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     title = formatDirectory(ctx.cwd);
-    modelInfo = emptyModelInfoState();
     gitInfo = emptyGitInfoState();
     install(ctx);
   });
@@ -314,7 +277,6 @@ export default function uiCustomization(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
-    stopModelListener();
     stopGitListener();
     for (const timer of themeRemovalTimers) clearTimeout(timer);
     themeRemovalTimers = [];

@@ -4,7 +4,7 @@ node_modules/
 # Installed separately by zzc-skills; these links are machine-local
 skills/
 
-# Downloaded/generated executables (file-search fallback binaries)
+# Downloaded/generated executables
 bin/
 
 # Pi runtime and private state
