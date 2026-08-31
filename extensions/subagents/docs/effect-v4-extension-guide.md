@@ -9,8 +9,7 @@
 > `@effect/tsgo@0.19.0`, `typescript@7.0.2` (checked 2026-07-13, in `extensions/subagents`).
 > `npm run check` there passes clean — use it as the reference implementation.
 >
-> Audience: the agents migrating `firecrawl-search`, `ask-user`, `git-info`,
-> and `copy-all`.
+> Audience: the agents migrating `firecrawl-search`, `ask-user`, and `copy-all`.
 
 ---
 
@@ -25,8 +24,8 @@ Reach for Effect only where you actually get something from it:
 
 - **Yes:** async work that needs typed errors, cancellation via the tool `AbortSignal`,
   timeouts, retries/polling, or a resource whose lifetime must outlive one call
-  (child process, subscription) → child processes (`git-info`, `copy-all`), the
-  Firecrawl SDK calls (`firecrawl-search`), git/gh polling (`git-info`).
+  (child process, subscription) → child processes (`subagents`) and the
+  Firecrawl SDK calls (`firecrawl-search`).
 - **No / barely:** pure TUI popups such as `ask-user`. These are synchronous or
   already-Promise UI code; wrapping them in Effect adds ceremony and no safety. Migrate
   them by keeping the logic and only touching whatever genuinely async part benefits
@@ -249,10 +248,10 @@ string trimming.
 
 ---
 
-## 5. Recipe: child processes + timeout + polling (git-info, copy-all)
+## 5. Recipe: child processes + timeout + polling
 
-`git-info` shells out to `git`/`gh` with per-command timeouts and polls on an interval;
-`copy-all` pipes text into `pbcopy`. Two viable levels — pick the lightest that fits.
+For command execution with timeouts or periodic refresh work, pick the lightest level that
+fits.
 
 **Simple, one-shot, small:** if all you do is "run a command, capture stdout, with a
 timeout," the Effect win is `Effect.timeout` + interruption killing the child. Use the
@@ -289,10 +288,10 @@ const pollLoop = refresh.pipe(
 const fiber = runtime.runFork(pollLoop); // interrupted by runtime.dispose()
 ```
 
-**When to stay plain:** `copy-all` spawning `pbcopy` is a trivial one-shot with no
-cancellation need — the existing `node:child_process` + Promise wrapper is honestly fine.
-Migrate it only for consistency; if you do, `Effect.callback` around `child.once("exit", …)`
-(see notes §4) is the minimal wrapper. Don't add a service/layer for a clipboard write.
+**When to stay plain:** a trivial one-shot with no cancellation need is often clearer as an
+existing `node:child_process` + Promise wrapper. Migrate it only for consistency; if you do,
+`Effect.callback` around `child.once("exit", …)` (see notes §4) is the minimal wrapper. Don't
+add a service/layer for a simple command.
 
 ---
 
