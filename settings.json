@@ -23,5 +23,23 @@
   "packages": [
     "npm:pi-web-access@0.15.0",
     "git:github.com/zhengfran/pi-subscription-usage"
-  ]
+  ],
+  "markdown": {
+    "mermaid": "final"
+  },
+  "tuiMode": "regular",
+  "images": {
+    "blockImages": false
+  },
+  "showHardwareCursor": true,
+  "terminal": {
+    "showTerminalProgress": true
+  },
+  "showCacheMissNotices": true,
+  "quietStartup": true,
+  "treeFilterMode": "default",
+  "modelThinkingLevels": {
+    "openai-codex/gpt-5.6-sol": "high",
+    "openai-codex/gpt-5.6-luna": "high"
+  }
 }
