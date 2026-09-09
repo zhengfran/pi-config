@@ -21,8 +21,7 @@
   "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "high",
   "packages": [
-    "npm:pi-web-access@0.15.0",
-    "git:github.com/zhengfran/pi-subscription-usage"
+    "npm:pi-web-access@0.15.0"
   ],
   "markdown": {
     "mermaid": "final"
