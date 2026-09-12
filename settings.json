@@ -16,7 +16,7 @@
     "anthropicExtraUsage": true
   },
   "externalEditor": "nvim",
-  "lastChangelogVersion": "0.84.3",
+  "lastChangelogVersion": "0.85.1",
   "defaultProvider": "github-copilot",
   "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "high",
