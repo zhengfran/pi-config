@@ -4,14 +4,32 @@ export interface RuntimeNotification {
   payload: Record<string, unknown>;
 }
 
+export interface StoredPresentation {
+  notificationId: number;
+  notification: RuntimeNotification;
+  text: string;
+}
+
+export interface PendingQuestion {
+  id: string;
+  prompt: string;
+  canContinue: boolean;
+}
+
 export interface PresentationState {
-  presented: Set<number>;
+  presentations: Map<number, StoredPresentation>;
+  acknowledged: Set<number>;
   cursor: number;
-  pendingQuestionIds: Set<string>;
+  pendingQuestions: Map<string, PendingQuestion>;
 }
 
 export function newPresentationState(): PresentationState {
-  return { presented: new Set(), cursor: 0, pendingQuestionIds: new Set() };
+  return {
+    presentations: new Map(),
+    acknowledged: new Set(),
+    cursor: 0,
+    pendingQuestions: new Map(),
+  };
 }
 
 export function notificationText(notification: RuntimeNotification): string {
@@ -29,4 +47,14 @@ export function notificationText(notification: RuntimeNotification): string {
     return `Orchestrator task outcome: ${String(state ?? "state changed")}.`;
   }
   return `Orchestrator notification (${notification.kind}): ${JSON.stringify(notification.payload)}`;
+}
+
+export function pendingQuestion(
+  notification: RuntimeNotification,
+): PendingQuestion | null {
+  if (notification.kind !== "reports.question") return null;
+  const id = notification.payload.questionId;
+  const prompt = notification.payload.prompt;
+  if (typeof id !== "string" || typeof prompt !== "string") return null;
+  return { id, prompt, canContinue: notification.payload.canContinue === true };
 }

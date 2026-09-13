@@ -3,11 +3,13 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { OrchestratorClient, ORCHESTRATOR_PROTOCOL } from "./client.ts";
 import {
   newPresentationState,
   notificationText,
+  pendingQuestion,
   type PresentationState,
   type RuntimeNotification,
 } from "./presentation.ts";
@@ -41,20 +43,58 @@ type IntentParameters = Static<typeof IntentParameters>;
 function loadPersistedState(ctx: ExtensionContext): PresentationState {
   const state = newPresentationState();
   for (const entry of ctx.sessionManager.getEntries()) {
+    if (entry.type !== "custom") continue;
+    const data = entry.data as Record<string, unknown> | undefined;
     if (
-      entry.type !== "custom" ||
-      entry.customType !== "orchestrator-presentation"
-    )
-      continue;
-    const data = entry.data as
-      | Partial<{ notificationId: number; cursor: number; questionId: string }>
-      | undefined;
-    if (typeof data?.notificationId === "number")
-      state.presented.add(data.notificationId);
+      entry.customType === "orchestrator-presentation" &&
+      typeof data?.notificationId === "number" &&
+      typeof data.text === "string" &&
+      data.notification &&
+      typeof data.notification === "object"
+    ) {
+      const notification = data.notification as RuntimeNotification;
+      state.presentations.set(data.notificationId, {
+        notificationId: data.notificationId,
+        notification,
+        text: data.text,
+      });
+      const question = pendingQuestion(notification);
+      if (question) state.pendingQuestions.set(question.id, question);
+    }
+    if (
+      entry.customType === "orchestrator-ack" &&
+      typeof data?.notificationId === "number"
+    ) {
+      state.acknowledged.add(data.notificationId);
+    }
     if (typeof data?.cursor === "number")
       state.cursor = Math.max(state.cursor, data.cursor);
-    if (typeof data?.questionId === "string")
-      state.pendingQuestionIds.add(data.questionId);
+    if (entry.customType === "orchestrator-projection") {
+      const questions = data?.pendingQuestions;
+      if (Array.isArray(questions)) {
+        state.pendingQuestions.clear();
+        for (const question of questions) {
+          if (
+            question &&
+            typeof question === "object" &&
+            typeof question.id === "string" &&
+            typeof question.prompt === "string"
+          ) {
+            state.pendingQuestions.set(question.id, {
+              id: question.id,
+              prompt: question.prompt,
+              canContinue: question.canContinue === true,
+            });
+          }
+        }
+      }
+    }
+    if (
+      entry.customType === "orchestrator-input-resolved" &&
+      typeof data?.questionId === "string"
+    ) {
+      state.pendingQuestions.delete(data.questionId);
+    }
   }
   return state;
 }
@@ -103,49 +143,98 @@ async function syncPresentation(
   const presented: string[] = [];
   for (const notification of (notices.body.notifications ??
     []) as RuntimeNotification[]) {
-    if (state.presented.has(notification.id)) continue;
-    const questionId =
-      typeof notification.payload.questionId === "string"
-        ? notification.payload.questionId
-        : undefined;
-    // Append first: this gives the local session a durable identity before the
-    // daemon acknowledgement can suppress replay after a crash/reopen.
-    pi.appendEntry("orchestrator-presentation", {
-      notificationId: notification.id,
-      questionId,
-      cursor: state.cursor,
-      protocol: ORCHESTRATOR_PROTOCOL,
-    });
-    state.presented.add(notification.id);
-    if (questionId) state.pendingQuestionIds.add(questionId);
-    pi.sendMessage(
-      {
-        customType: "orchestrator-notification",
-        content: notificationText(notification),
-        display: true,
-        details: { notificationId: notification.id, kind: notification.kind },
-      },
-      { deliverAs: "followUp", triggerTurn: false },
-    );
+    let item = state.presentations.get(notification.id);
+    if (!item) {
+      // A custom entry is synchronously appended to Pi's session JSONL and
+      // rendered below. Unlike sendMessage(followUp), it survives a process
+      // exit while the agent is streaming, so it is the presentation record.
+      item = {
+        notificationId: notification.id,
+        notification,
+        text: notificationText(notification),
+      };
+      pi.appendEntry("orchestrator-presentation", {
+        ...item,
+        protocol: ORCHESTRATOR_PROTOCOL,
+      });
+      state.presentations.set(notification.id, item);
+      const question = pendingQuestion(notification);
+      if (question) state.pendingQuestions.set(question.id, question);
+      presented.push(item.text);
+    }
+    // A durable presentation without an ack is intentionally retried on
+    // every recovery. The runtime acknowledgement is idempotent.
     const ack = await client.acknowledge(notification.id);
     if (ack.status !== 200)
       throw new Error(
         `Notification ${notification.id} presentation was retained locally but acknowledgement failed.`,
       );
-    presented.push(notificationText(notification));
+    if (!state.acknowledged.has(notification.id)) {
+      pi.appendEntry("orchestrator-ack", {
+        notificationId: notification.id,
+        cursor: state.cursor,
+        protocol: ORCHESTRATOR_PROTOCOL,
+      });
+      state.acknowledged.add(notification.id);
+    }
   }
   const events = await client.events(state.cursor);
   if (events.status === 409) {
-    const snapshot = await client.snapshot();
-    if (snapshot.status !== 200)
-      throw new Error(
-        "Daemon requested resnapshot but snapshot is unavailable.",
-      );
-    state.cursor = Number(snapshot.body.cursor ?? state.cursor);
+    let after: Record<string, unknown> | undefined;
+    let baseCursor: number | undefined;
+    let snapshot: Record<string, unknown> | undefined;
+    const questions: Array<{
+      id: string;
+      prompt: string;
+      canContinue: boolean;
+    }> = [];
+    do {
+      const page = await client.snapshot({ after, baseCursor, limit: 200 });
+      if (page.status !== 200)
+        throw new Error(
+          "Daemon requested resnapshot but snapshot is unavailable.",
+        );
+      snapshot = page.body;
+      if (baseCursor === undefined) baseCursor = Number(page.body.cursor);
+      for (const question of (page.body.questions ?? []) as Array<
+        Record<string, unknown>
+      >) {
+        if (question.state !== "pending" || typeof question.id !== "string")
+          continue;
+        const payload = question.prompt as Record<string, unknown> | undefined;
+        const prompt =
+          typeof payload?.prompt === "string"
+            ? payload.prompt
+            : "Worker needs input.";
+        questions.push({
+          id: question.id,
+          prompt,
+          canContinue: question.canContinue === true,
+        });
+      }
+      after = page.body.next as Record<string, unknown> | undefined;
+    } while (after && Object.values(after).some((value) => value !== null));
+    state.cursor = Number(snapshot?.cursor ?? state.cursor);
+    state.pendingQuestions.clear();
+    for (const question of questions)
+      state.pendingQuestions.set(question.id, question);
+    pi.appendEntry("orchestrator-projection", {
+      cursor: state.cursor,
+      pendingQuestions: [...state.pendingQuestions.values()],
+      protocol: ORCHESTRATOR_PROTOCOL,
+    });
   } else if (events.status === 200) {
-    state.cursor = Number(
+    const cursor = Number(
       events.body.cursor ?? events.body.nextCursor ?? state.cursor,
     );
+    if (cursor > state.cursor) {
+      state.cursor = cursor;
+      pi.appendEntry("orchestrator-cursor", {
+        cursor,
+        pendingQuestions: [...state.pendingQuestions.values()],
+        protocol: ORCHESTRATOR_PROTOCOL,
+      });
+    }
   }
   return { presented, cursor: state.cursor, status: status.body };
 }
@@ -157,6 +246,22 @@ export default function orchestrator(pi: ExtensionAPI) {
   const getState = () => (state ??= loadPersistedState(ctx!));
   const sync = async () =>
     syncPresentation(pi, ctx!, configuredClient(), getState());
+
+  pi.registerEntryRenderer<{
+    notificationId?: number;
+    text?: string;
+  }>(
+    "orchestrator-presentation",
+    (entry, _options, theme) =>
+      new Text(
+        theme.fg(
+          "accent",
+          `orchestrator · ${entry.data?.text ?? "notification"}`,
+        ),
+        0,
+        0,
+      ),
+  );
 
   pi.on("session_start", async (_event, session) => {
     ctx = session;
@@ -190,6 +295,17 @@ export default function orchestrator(pi: ExtensionAPI) {
         httpStatus: response.status,
         outcome: response.body,
       });
+      if (
+        params.intent === "answerSubmit" &&
+        response.status === 200 &&
+        typeof params.payload.questionId === "string"
+      ) {
+        pi.appendEntry("orchestrator-input-resolved", {
+          questionId: params.payload.questionId,
+          protocol: ORCHESTRATOR_PROTOCOL,
+        });
+        state?.pendingQuestions.delete(params.payload.questionId);
+      }
       return {
         content: [{ type: "text" as const, text }],
         details: { response },

@@ -120,8 +120,20 @@ export class OrchestratorClient {
     return this.#request("GET", "/v1/status");
   }
 
-  snapshot() {
-    return this.#request("GET", "/v1/snapshot");
+  snapshot({
+    after,
+    baseCursor,
+    limit,
+  }: {
+    after?: Record<string, unknown>;
+    baseCursor?: number;
+    limit?: number;
+  } = {}) {
+    const query = new URLSearchParams();
+    if (after !== undefined) query.set("after", JSON.stringify(after));
+    if (baseCursor !== undefined) query.set("baseCursor", String(baseCursor));
+    if (limit !== undefined) query.set("limit", String(limit));
+    return this.#request("GET", `/v1/snapshot${query.size ? `?${query}` : ""}`);
   }
 
   notifications() {
