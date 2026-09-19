@@ -140,7 +140,7 @@ function protocolError(value: unknown) {
   );
 }
 
-/** 0.144.3 accepts these effort slugs; individual models expose a subset. */
+/** app-server accepts any advertised slug; individual models expose a subset. */
 function preferredCodexEffort(effort: ReasoningEffort | undefined) {
   switch (effort) {
     case "off":
@@ -149,10 +149,9 @@ function preferredCodexEffort(effort: ReasoningEffort | undefined) {
     case "low":
     case "medium":
     case "high":
-      return effort;
     case "xhigh":
     case "max":
-      return "xhigh";
+      return effort;
     case undefined:
       return undefined;
   }
@@ -179,7 +178,15 @@ function supportedCodexEffort(
     .filter((value): value is string => value !== undefined);
   if (supported.includes(preferred)) return preferred;
 
-  const scale = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
+  const scale = [
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ] as const;
   const target = scale.indexOf(preferred);
   const candidates = supported
     .map((value) => ({

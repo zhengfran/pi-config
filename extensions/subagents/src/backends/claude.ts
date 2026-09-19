@@ -138,20 +138,24 @@ class ClaudeInput implements AsyncIterable<SDKUserMessage> {
 // --- Model, effort, and transcript helpers ----------------------------------
 
 /**
- * Claude's deprecated-but-supported maxThinkingTokens is the closest match to
- * the shared numeric scale requested by this extension. Zero explicitly
- * disables extended thinking in SDK 0.3.207; an omitted effort leaves the CLI
- * default untouched.
+ * Map the shared effort scale onto the SDK's `effort` option. The deprecated
+ * maxThinkingTokens budget is ignored by adaptive-thinking models (Opus 5,
+ * Sonnet 5, Fable), so it cannot steer them. "off" disables thinking outright;
+ * the CLI silently downgrades levels a model does not support. An omitted
+ * effort leaves the CLI default untouched.
  */
-const THINKING_BUDGETS = {
-  off: 0,
-  minimal: 1_024,
-  low: 4_096,
-  medium: 10_000,
-  high: 16_000,
-  xhigh: 32_000,
-  max: 63_999,
-} satisfies Record<ReasoningEffort, number>;
+function claudeEffortOptions(effort: ReasoningEffort | undefined) {
+  switch (effort) {
+    case undefined:
+      return {};
+    case "off":
+      return { thinking: { type: "disabled" as const } };
+    case "minimal":
+      return { effort: "low" as const };
+    default:
+      return { effort };
+  }
+}
 
 function boundedError(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(
@@ -317,9 +321,6 @@ const makeClaudeSession = (
       } satisfies SubagentMeta as SubagentMeta,
     };
 
-    const thinkingBudget = task.reasoningEffort
-      ? THINKING_BUDGETS[task.reasoningEffort]
-      : undefined;
     const claudeBinary = resolveClaudeBinary();
     const nativeQuery = yield* Effect.try({
       try: () =>
@@ -346,9 +347,7 @@ const makeClaudeSession = (
               ? { pathToClaudeCodeExecutable: claudeBinary }
               : {}),
             ...(task.model ? { model: task.model } : {}),
-            ...(thinkingBudget !== undefined
-              ? { maxThinkingTokens: thinkingBudget }
-              : {}),
+            ...claudeEffortOptions(task.reasoningEffort),
           },
         }),
       catch: (error) => new SpawnError({ message: boundedError(error) }),
