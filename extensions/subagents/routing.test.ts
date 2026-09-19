@@ -168,6 +168,33 @@ test("corporate and personal isolated work use different fit tiers", () => {
   );
 });
 
+test("algorithmic work keeps effort-ignoring Kiro as a last resort", () => {
+  assert.deepEqual(taskFitTiers("algorithmic", "corporate"), [
+    ["pi", "claude"],
+    ["kiro"],
+  ]);
+  assert.deepEqual(taskFitTiers("algorithmic", "personal"), [
+    ["codex", "pi"],
+    ["claude"],
+    ["kiro"],
+  ]);
+
+  const decision = routeSubagent(
+    {
+      taskKind: "algorithmic",
+      available: all,
+      parentProvider: "github-copilot",
+    },
+    state("corporate", {
+      copilot: quota("copilot", 10),
+      claude: quota("claude", 20),
+      kiro: quota("kiro", 100),
+    }),
+  );
+  assert.equal(decision.harness, "claude");
+  assert.equal(decision.tier, 1);
+});
+
 test("corporate-system access is separate from task kind and requires Kiro", () => {
   assert.deepEqual(CORPORATE_ACCESS_REQUIREMENTS, [
     "jira",
