@@ -1,8 +1,7 @@
 /**
  * pi backend — real implementation over the pi SDK.
  *
- * Each subagent is an in-process `AgentSession` (a port of v1
- * subagents/manager.ts + shared/child-session.ts):
+ * Each subagent is an in-process `AgentSession` with:
  * - real session files visible in /resume, child resources loaded per-cwd
  *   with trust gating, and the child tool denylist;
  * - `session.subscribe()` events translated to normalized SubagentEvents;
@@ -34,7 +33,7 @@ import type {
   TranscriptPart,
 } from "../domain.ts";
 import { SendError, SpawnError } from "../domain.ts";
-import { createToolCallTimeoutGuard } from "../../../shared/tool-call-timeout.ts";
+import { createToolCallTimeoutGuard } from "../tool-call-timeout.ts";
 
 const CHILD_SHUTDOWN_TIMEOUT_MS = 5_000;
 
@@ -56,43 +55,68 @@ type ThinkingLevel = NonNullable<
 >;
 
 /**
- * Resolve the generic model hint against the parent registry (v1 semantics):
- * "provider/model-id" is exact; a bare id prefers the inherited provider,
- * then must be unambiguous across providers. No hint inherits the parent
- * model; with nothing to inherit, the SDK default applies.
+ * Resolve a Pi model only from the parent registry's authenticated/available
+ * set. A provider-qualified hint is exact. A bare id prefers the inherited
+ * provider when that provider is available, then must be unambiguous across
+ * other available providers. No hint inherits the parent model; with nothing
+ * to inherit, the SDK default applies.
  */
-function resolvePiModel(
+export function resolvePiModel(
   registry: ModelRegistry,
   hint: string | undefined,
   inherited: { provider: string; id: string } | undefined,
 ): Model<any> | undefined {
+  const available = registry.getAvailable();
+  const findAvailable = (provider: string, id: string) =>
+    available.find((model) => model.provider === provider && model.id === id);
+
   if (!hint) {
     if (!inherited) return undefined;
-    return registry.find(inherited.provider, inherited.id) ?? undefined;
+    const inheritedModel = findAvailable(inherited.provider, inherited.id);
+    if (inheritedModel) return inheritedModel;
+    throw new Error(
+      `Inherited model "${inherited.provider}/${inherited.id}" is not authenticated or available.`,
+    );
   }
+
   const slash = hint.indexOf("/");
   if (slash > 0) {
     const provider = hint.slice(0, slash);
     const id = hint.slice(slash + 1);
-    const found = registry.find(provider, id);
+    const found = findAvailable(provider, id);
     if (found) return found;
+    if (registry.find(provider, id)) {
+      throw new Error(`Model "${hint}" is not authenticated or available.`);
+    }
     throw new Error(`Unknown model "${hint}".`);
   }
+
   if (inherited) {
-    const found = registry.find(inherited.provider, hint);
+    const found = findAvailable(inherited.provider, hint);
     if (found) return found;
   }
-  const matches = registry.getAll().filter((m) => m.id === hint);
+
+  const matches = available.filter((model) => model.id === hint);
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
     throw new Error(
-      `Model "${hint}" exists in multiple providers (${matches.map((m) => m.provider).join(", ")}). Use "provider/${hint}".`,
+      `Model "${hint}" exists in multiple authenticated providers (${matches.map((model) => model.provider).join(", ")}). Use "provider/${hint}".`,
+    );
+  }
+
+  const unavailableProviders = registry
+    .getAll()
+    .filter((model) => model.id === hint)
+    .map((model) => model.provider);
+  if (unavailableProviders.length > 0) {
+    throw new Error(
+      `Model "${hint}" is not authenticated or available from: ${unavailableProviders.join(", ")}.`,
     );
   }
   throw new Error(`Unknown model "${hint}".`);
 }
 
-// --- Child session helpers (ported from v1 shared/child-session.ts) -----------
+// --- Child session helpers --------------------------------------------------
 
 /** Load normal global/package resources and trust-gated project resources. */
 async function createChildResources(cwd: string, projectTrusted: boolean) {
@@ -568,7 +592,6 @@ const makePiSession = (
 
 export const piBackend: SubagentBackend = {
   name: "pi",
-  capabilities: { steering: true, modelSelection: true, reasoningEffort: true },
   // In-process SDK: always available.
   available: Effect.succeed(true),
   spawn: makePiSession,

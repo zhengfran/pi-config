@@ -161,9 +161,8 @@ export interface SubagentManagerShape {
     ids: ReadonlyArray<string>,
   ): Effect.Effect<ReadonlyArray<CancelResult>>;
   send(id: string, text: string): Effect.Effect<void, SendError>;
-  get(id: string): Effect.Effect<SubagentSnapshot | undefined>;
-  readonly list: Effect.Effect<ReadonlyArray<SubagentSnapshot>>;
-  readonly disposeAll: Effect.Effect<void>;
+  /** Probe registered backends concurrently for deterministic routing. */
+  readonly availableBackends: Effect.Effect<ReadonlySet<BackendName>>;
   readonly view: SubagentReadModel;
 }
 
@@ -713,6 +712,20 @@ const makeManager = Effect.gen(function* () {
     },
   };
 
+  const availableBackends = Effect.forEach(
+    [...registry.entries()],
+    ([name, backend]) =>
+      backend.available.pipe(Effect.map((available) => ({ name, available }))),
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(
+      (results) =>
+        new Set<BackendName>(
+          results.filter(({ available }) => available).map(({ name }) => name),
+        ),
+    ),
+  );
+
   // Safety net: disposing the ManagedRuntime tears everything down even if
   // the extension forgot to call disposeAll explicitly.
   yield* Effect.addFinalizer(() => disposeAll);
@@ -722,9 +735,7 @@ const makeManager = Effect.gen(function* () {
     waitFor,
     cancel,
     send,
-    get: (id) => Effect.sync(() => entries.get(id)?.snapshot),
-    list: Effect.sync(() => [...entries.values()].map((e) => e.snapshot)),
-    disposeAll,
+    availableBackends,
     view,
   });
 });

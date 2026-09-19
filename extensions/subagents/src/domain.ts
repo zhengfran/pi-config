@@ -20,8 +20,9 @@ export type SubagentOrigin = "model" | "btw";
  * Shared reasoning-effort scale (pi's thinking levels). Each backend maps a
  * value to its nearest native equivalent: pi uses it directly, codex
  * translates to its reasoning-effort slugs, claude translates to thinking
- * budgets, kiro ignores it (no native control). Omitted = backend default
- * (pi inherits the parent level).
+ * budgets, kiro ignores it (no native control). Tool-driven spawns receive a
+ * task-kind default from routing; direct backend callers may omit it, which
+ * leaves the backend default in place (Pi inherits the parent level).
  */
 export const REASONING_EFFORTS = [
   "off",

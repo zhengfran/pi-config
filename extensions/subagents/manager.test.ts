@@ -72,6 +72,13 @@ async function withManager(
   }
 }
 
+test("manager probes registered backend availability for routing", async () => {
+  await withManager(async (manager, runtime) => {
+    const available = await runTool(runtime, manager.availableBackends);
+    assert.deepEqual([...available].sort(), ["claude", "codex", "pi"]);
+  });
+});
+
 test("stub subagent completes and delivers a final result", async () => {
   await withManager(async (manager, runtime) => {
     const settled: Array<{ id: string; consumed: boolean }> = [];

@@ -1,22 +1,20 @@
 /**
- * ask_user - Lets the model ask a single multiple-choice question.
+ * ask_user - Lets the model ask one multiple-choice question.
  *
- * - 2 to 5 model-provided options, plus an always-present "Write my own answer" option
- * - Popup UI: arrow keys or number keys to pick, Enter to confirm
- * - "Write my own answer" opens an inline editor (Esc returns to the options)
- * - Esc on the options dismisses the question (the model is told you declined)
+ * Pi's SelectList owns navigation, scrolling, rendering, and key handling.
+ * Selecting the final option opens Pi's built-in editor for a free-form reply.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  Editor,
-  type EditorTheme,
-  Key,
-  matchesKey,
+  DynamicBorder,
+  type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
+import {
+  Container,
+  type SelectItem,
+  SelectList,
   Text,
-  truncateToWidth,
 } from "@earendil-works/pi-tui";
-import { Cause, Effect, Exit } from "effect";
 import { Type, type Static } from "typebox";
 import {
   ASK_USER_PARAMETER_DESCRIPTIONS,
@@ -28,6 +26,7 @@ import {
 
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 5;
+const CUSTOM_VALUE = "__custom__";
 
 const OptionSchema = Type.Object({
   label: Type.String({
@@ -61,39 +60,9 @@ interface AskUserDetails {
   cancelled: boolean;
 }
 
-type SelectionResult = {
-  answer: string;
-  wasCustom: boolean;
-  index?: number;
-} | null;
-
 interface DisplayOption {
   label: string;
   description?: string;
-  isOther?: boolean;
-}
-
-function wrapText(text: string, width: number): string[] {
-  const lines: string[] = [];
-  for (const paragraph of text.split("\n")) {
-    const words = paragraph.split(/\s+/).filter(Boolean);
-    if (words.length === 0) {
-      lines.push("");
-      continue;
-    }
-    let current = "";
-    for (const word of words) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (candidate.length > width && current) {
-        lines.push(current);
-        current = word;
-      } else {
-        current = candidate;
-      }
-    }
-    if (current) lines.push(current);
-  }
-  return lines;
 }
 
 export default function askUser(pi: ExtensionAPI) {
@@ -114,7 +83,7 @@ export default function askUser(pi: ExtensionAPI) {
         content: [{ type: "text" as const, text }],
         details: {
           question: params.question,
-          options: params.options.map((o) => o.label),
+          options: params.options.map((option) => option.label),
           answer,
           wasCustom,
           cancelled: answer === null,
@@ -138,254 +107,128 @@ export default function askUser(pi: ExtensionAPI) {
         return reply(buildAskUserResultMessage({ kind: "cancelled" }));
       }
 
-      const allOptions: DisplayOption[] = [
-        ...params.options,
-        { label: "Write my own answer…", isOther: true },
-      ];
-
-      const showQuestion = (uiSignal: AbortSignal) =>
-        ctx.ui.custom<SelectionResult>((tui, theme, _kb, done) => {
-          let optionIndex = 0;
-          let editMode = false;
-          let cachedLines: string[] | undefined;
-
+      const showOptions = () =>
+        ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
           let settled = false;
-
-          function finish(result: SelectionResult) {
+          const finish = (value: string | null) => {
             if (settled) return;
             settled = true;
-            uiSignal.removeEventListener("abort", cancel);
-            done(result);
-          }
+            signal?.removeEventListener("abort", cancel);
+            done(value);
+          };
+          const cancel = () => finish(null);
 
-          function cancel() {
-            finish(null);
-          }
-
-          uiSignal.addEventListener("abort", cancel, { once: true });
-          if (uiSignal.aborted) queueMicrotask(cancel);
-
-          const editorTheme: EditorTheme = {
-            borderColor: (s) => theme.fg("accent", s),
-            selectList: {
-              selectedPrefix: (t) => theme.fg("accent", t),
-              selectedText: (t) => theme.fg("accent", t),
-              description: (t) => theme.fg("muted", t),
-              scrollInfo: (t) => theme.fg("dim", t),
-              noMatch: (t) => theme.fg("warning", t),
+          const items: SelectItem[] = [
+            ...params.options.map((option, index) => ({
+              value: String(index),
+              label: option.label,
+              description: option.description,
+            })),
+            {
+              value: CUSTOM_VALUE,
+              label: "Write my own answer…",
+              description: "Open a text editor",
             },
-          };
-          const editor = new Editor(tui, editorTheme);
+          ];
+          const list = new SelectList(items, items.length, {
+            selectedPrefix: (text) => theme.fg("accent", text),
+            selectedText: (text) => theme.fg("accent", text),
+            description: (text) => theme.fg("muted", text),
+            scrollInfo: (text) => theme.fg("dim", text),
+            noMatch: (text) => theme.fg("warning", text),
+          });
+          list.onSelect = (item) => finish(item.value);
+          list.onCancel = cancel;
 
-          editor.onSubmit = (value) => {
-            const trimmed = value.trim();
-            if (trimmed) {
-              finish({ answer: trimmed, wasCustom: true });
-            } else {
-              editMode = false;
-              editor.setText("");
-              refresh();
-            }
-          };
+          const container = new Container();
+          container.addChild(
+            new DynamicBorder((text: string) => theme.fg("accent", text)),
+          );
+          container.addChild(
+            new Text(theme.fg("accent", theme.bold(params.question)), 1, 0),
+          );
+          container.addChild(list);
+          container.addChild(
+            new Text(
+              theme.fg("dim", "↑↓ select • Enter confirm • Esc dismiss"),
+              1,
+              0,
+            ),
+          );
+          container.addChild(
+            new DynamicBorder((text: string) => theme.fg("accent", text)),
+          );
 
-          function refresh() {
-            cachedLines = undefined;
-            tui.requestRender();
-          }
-
-          function selectOption(index: number) {
-            const selected = allOptions[index];
-            if (selected.isOther) {
-              optionIndex = index;
-              editMode = true;
-              refresh();
-            } else {
-              finish({
-                answer: selected.label,
-                wasCustom: false,
-                index: index + 1,
-              });
-            }
-          }
-
-          function handleInput(data: string) {
-            if (editMode) {
-              if (matchesKey(data, Key.escape)) {
-                editMode = false;
-                editor.setText("");
-                refresh();
-                return;
-              }
-              editor.handleInput(data);
-              refresh();
-              return;
-            }
-
-            if (matchesKey(data, Key.up)) {
-              optionIndex =
-                (optionIndex - 1 + allOptions.length) % allOptions.length;
-              refresh();
-              return;
-            }
-            if (matchesKey(data, Key.down)) {
-              optionIndex = (optionIndex + 1) % allOptions.length;
-              refresh();
-              return;
-            }
-
-            // Number keys jump straight to an option
-            if (
-              data.length === 1 &&
-              data >= "1" &&
-              data <= String(allOptions.length)
-            ) {
-              selectOption(Number(data) - 1);
-              return;
-            }
-
-            if (matchesKey(data, Key.enter)) {
-              selectOption(optionIndex);
-              return;
-            }
-
-            if (matchesKey(data, Key.escape)) {
-              finish(null);
-            }
-          }
-
-          function render(width: number): string[] {
-            if (cachedLines) return cachedLines;
-
-            const lines: string[] = [];
-            const add = (s: string) => lines.push(truncateToWidth(s, width));
-
-            const title = " Question ";
-            add(
-              theme.fg(
-                "accent",
-                `─${title}${"─".repeat(Math.max(0, width - title.length - 1))}`,
-              ),
-            );
-            for (const line of wrapText(
-              params.question,
-              Math.max(10, width - 2),
-            )) {
-              add(` ${theme.fg("text", theme.bold(line))}`);
-            }
-            lines.push("");
-
-            for (let i = 0; i < allOptions.length; i++) {
-              const opt = allOptions[i];
-              const selected = i === optionIndex;
-              const prefix = selected ? theme.fg("accent", " ❯ ") : "   ";
-              const marker = opt.isOther ? "✎" : `${i + 1}.`;
-              const label = `${marker} ${opt.label}`;
-
-              if (selected || (opt.isOther && editMode)) {
-                add(prefix + theme.fg("accent", label));
-              } else {
-                add(prefix + theme.fg(opt.isOther ? "muted" : "text", label));
-              }
-
-              if (opt.description) {
-                add(`      ${theme.fg("muted", opt.description)}`);
-              }
-            }
-
-            if (editMode) {
-              lines.push("");
-              add(theme.fg("muted", " Your answer:"));
-              for (const line of editor.render(width - 2)) {
-                add(` ${line}`);
-              }
-            }
-
-            lines.push("");
-            if (editMode) {
-              add(theme.fg("dim", " Enter submit • Esc back to options"));
-            } else {
-              add(
-                theme.fg(
-                  "dim",
-                  ` ↑↓ or 1-${allOptions.length} select • Enter confirm • Esc dismiss`,
-                ),
-              );
-            }
-            add(theme.fg("accent", "─".repeat(width)));
-
-            cachedLines = lines;
-            return lines;
-          }
+          signal?.addEventListener("abort", cancel, { once: true });
+          if (signal?.aborted) queueMicrotask(cancel);
 
           return {
-            render,
-            invalidate: () => {
-              cachedLines = undefined;
+            render: (width: number) => container.render(width),
+            invalidate: () => container.invalidate(),
+            handleInput: (data: string) => {
+              list.handleInput(data);
+              tui.requestRender();
             },
-            handleInput,
-            dispose: () => {
-              uiSignal.removeEventListener("abort", cancel);
-            },
+            dispose: () => signal?.removeEventListener("abort", cancel),
           };
         });
 
-      const uiExit = await Effect.runPromiseExit(
-        Effect.tryPromise(showQuestion),
-        signal ? { signal } : undefined,
-      );
-
-      if (Exit.isFailure(uiExit)) {
-        if (Cause.hasInterruptsOnly(uiExit.cause)) {
-          return reply(buildAskUserResultMessage({ kind: "cancelled" }));
+      while (!signal?.aborted) {
+        const selection = await showOptions();
+        if (selection === null) {
+          return reply(buildAskUserResultMessage({ kind: "dismissed" }));
         }
-        const [first] = Cause.prettyErrors(uiExit.cause);
-        throw new Error(first?.message ?? Cause.pretty(uiExit.cause));
-      }
 
-      const result = uiExit.value;
+        if (selection === CUSTOM_VALUE) {
+          const answer = (await ctx.ui.editor("Your answer"))?.trim();
+          if (signal?.aborted) {
+            return reply(buildAskUserResultMessage({ kind: "cancelled" }));
+          }
+          if (!answer) continue;
+          return reply(
+            buildAskUserResultMessage({ kind: "custom", answer }),
+            answer,
+            true,
+          );
+        }
 
-      if (!result) {
-        return reply(buildAskUserResultMessage({ kind: "dismissed" }));
-      }
-
-      if (result.wasCustom) {
+        const index = Number(selection);
+        const answer = params.options[index]?.label;
+        if (answer === undefined) {
+          throw new Error(`ask_user received an invalid option: ${selection}`);
+        }
         return reply(
           buildAskUserResultMessage({
-            kind: "custom",
-            answer: result.answer,
+            kind: "selected",
+            answer,
+            index: index + 1,
           }),
-          result.answer,
-          true,
+          answer,
         );
       }
 
-      return reply(
-        buildAskUserResultMessage({
-          kind: "selected",
-          answer: result.answer,
-          index: result.index,
-        }),
-        result.answer,
-      );
+      return reply(buildAskUserResultMessage({ kind: "cancelled" }));
     },
 
-    renderCall(args, theme, _context) {
+    renderCall(args, theme) {
       let text = theme.fg("toolTitle", theme.bold("ask_user "));
       text += theme.fg(
         "muted",
         typeof args.question === "string" ? args.question : "",
       );
-      const opts = Array.isArray(args.options)
+      const options = Array.isArray(args.options)
         ? (args.options as DisplayOption[])
         : [];
-      if (opts.length > 0) {
-        const numbered = opts.map((o, i) => `${i + 1}. ${o.label}`);
+      if (options.length > 0) {
+        const numbered = options.map(
+          (option, index) => `${index + 1}. ${option.label}`,
+        );
         text += `\n${theme.fg("dim", `  ${numbered.join("  ")}`)}`;
       }
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, _options, theme, _context) {
+    renderResult(result, _options, theme) {
       const details = result.details as AskUserDetails | undefined;
       if (!details) {
         const first = result.content[0];
@@ -406,8 +249,9 @@ export default function askUser(pi: ExtensionAPI) {
         );
       }
 
-      const idx = details.options.indexOf(details.answer) + 1;
-      const display = idx > 0 ? `${idx}. ${details.answer}` : details.answer;
+      const index = details.options.indexOf(details.answer) + 1;
+      const display =
+        index > 0 ? `${index}. ${details.answer}` : details.answer;
       return new Text(
         theme.fg("success", "✓ ") + theme.fg("accent", display),
         0,

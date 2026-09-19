@@ -83,16 +83,6 @@ test("kiro is a registered backend name", () => {
   assert.equal(kiroBackend.name, "kiro");
 });
 
-test("capabilities reflect what kiro-cli can actually do", () => {
-  // One invocation is one turn: nothing can be steered mid-run, and there is
-  // no reasoning-effort flag. Only --model is real.
-  assert.deepEqual(kiroBackend.capabilities, {
-    steering: false,
-    modelSelection: true,
-    reasoningEffort: false,
-  });
-});
-
 test("available agrees with kiro-cli's credential store", async () => {
   const available = await Effect.runPromise(kiroBackend.available);
   assert.equal(typeof available, "boolean");

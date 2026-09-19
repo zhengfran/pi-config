@@ -695,7 +695,6 @@ const makeClaudeSession = (
 
 export const claudeBackend: SubagentBackend = {
   name: "claude",
-  capabilities: { steering: true, modelSelection: true, reasoningEffort: true },
   available: Effect.sync(() => resolveClaudeBinary() !== undefined),
   spawn: makeClaudeSession,
 };

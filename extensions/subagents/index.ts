@@ -1,10 +1,11 @@
 /**
- * Subagents — spawn background subagents on one of three backends
- * (pi, Claude Code, Codex) unified behind a single Effect service interface.
+ * Subagents — spawn background subagents on one of four backends
+ * (Pi, Claude Code, Codex, or Kiro) behind one Effect service interface.
  *
  * Tools (for the parent LLM):
- * - subagent_spawn: fire-and-forget spawn (prompt, title, agent, working_dir,
- *   model, reasoning_effort). Max 4 running at once across all backends.
+ * - subagent_spawn: quota-aware fire-and-forget spawn (prompt, title,
+ *   task_kind, optional required corporate access, optional explicit harness
+ *   override, working_dir, model, reasoning_effort). Max 4 running at once.
  * - subagent_wait: block until the listed subagents settle, return results.
  * - subagent_cancel: stop one or more running subagents.
  * - subagent_check: peek at a subagent's status and recent activity.
@@ -71,15 +72,30 @@ import {
 } from "./src/prompt.ts";
 import { createDeferredResultDelivery } from "./src/result-delivery.ts";
 import {
+  CORPORATE_ACCESS_REQUIREMENTS,
+  loadRoutingState,
+  routeSubagent,
+  routingDiagnosticLines,
+  TASK_KINDS,
+} from "./src/routing.ts";
+import {
   createSubagentRuntime,
   runTool,
   type SubagentRuntime,
 } from "./src/runtime.ts";
+import { showRoutingDiagnostics } from "./src/ui/routing.ts";
 import { openSubagentPicker, openSubagentTakeover } from "./src/ui/takeover.ts";
 
 const SUBAGENT_OUTPUT_MAX_BYTES = 24 * 1024;
 const WAIT_OUTPUT_MAX_BYTES = 48 * 1024;
 const WAIT_PER_AGENT_MAX_BYTES = 16 * 1024;
+const MANAGEMENT_TOOL_NAMES = [
+  "subagent_wait",
+  "subagent_cancel",
+  "subagent_check",
+  "subagent_list",
+] as const;
+const MANAGEMENT_TOOL_NAME_SET = new Set<string>(MANAGEMENT_TOOL_NAMES);
 
 interface BtwResultData {
   readonly id: string;
@@ -147,6 +163,18 @@ export default function (pi: ExtensionAPI) {
   const resultDelivery = createDeferredResultDelivery<SubagentSnapshot>();
 
   const getRuntime = () => (runtime ??= createSubagentRuntime());
+
+  const hideManagementTools = () => {
+    pi.setActiveTools(
+      pi.getActiveTools().filter((name) => !MANAGEMENT_TOOL_NAME_SET.has(name)),
+    );
+  };
+
+  const activateManagementTools = () => {
+    pi.setActiveTools([
+      ...new Set([...pi.getActiveTools(), ...MANAGEMENT_TOOL_NAMES]),
+    ]);
+  };
 
   /** Resolve the manager service once per runtime and wire the extension hooks. */
   const getManager = () => {
@@ -244,6 +272,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
     sessionContext = ctx;
     if (ctx.hasUI) ui = ctx.ui;
+    hideManagementTools();
   });
 
   pi.on("agent_settled", flushResults);
@@ -278,9 +307,20 @@ export default function (pi: ExtensionAPI) {
       name: Type.String({
         description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.name,
       }),
-      harness: StringEnum(BACKEND_NAMES, {
-        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.harness,
+      task_kind: StringEnum(TASK_KINDS, {
+        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.taskKind,
       }),
+      required_access: Type.Optional(
+        Type.Array(StringEnum(CORPORATE_ACCESS_REQUIREMENTS), {
+          uniqueItems: true,
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.requiredAccess,
+        }),
+      ),
+      harness: Type.Optional(
+        StringEnum(BACKEND_NAMES, {
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.harness,
+        }),
+      ),
       working_dir: Type.Optional(
         Type.String({
           description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.workingDir,
@@ -298,8 +338,31 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      if (params.model && !params.harness) {
+        throw new Error(
+          "model requires an explicit user-requested harness because model hints are harness-specific",
+        );
+      }
       const manager = await getManager();
-      const harness = params.harness;
+      const [routingState, available] = await Promise.all([
+        loadRoutingState({ agentDir: getAgentDir() }),
+        runTool(getRuntime(), manager.availableBackends, {
+          signal,
+          interruptMessage: "Subagent routing aborted.",
+        }),
+      ]);
+      const decision = routeSubagent(
+        {
+          taskKind: params.task_kind,
+          requiredAccess: params.required_access,
+          reasoningEffort: params.reasoning_effort,
+          override: params.harness,
+          available,
+          parentProvider: ctx.model?.provider,
+        },
+        routingState,
+      );
+      const harness = decision.harness;
 
       const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
       if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
@@ -314,7 +377,7 @@ export default function (pi: ExtensionAPI) {
           title,
           cwd,
           model: params.model,
-          reasoningEffort: params.reasoning_effort,
+          reasoningEffort: decision.reasoningEffort,
           parent: {
             parentCwd: ctx.cwd,
             projectTrusted: resolveChildProjectTrust({
@@ -331,6 +394,7 @@ export default function (pi: ExtensionAPI) {
         }),
         { signal, interruptMessage: "Subagent spawn aborted." },
       );
+      activateManagementTools();
 
       return {
         content: [
@@ -342,6 +406,8 @@ export default function (pi: ExtensionAPI) {
               harness,
               modelLabel: snap.meta.modelLabel ?? "?",
               cwd,
+              reasoningEffort: decision.reasoningEffort,
+              routingReason: decision.reason,
             }),
           },
         ],
@@ -351,6 +417,8 @@ export default function (pi: ExtensionAPI) {
           cwd,
           harness,
           model: snap.meta.modelLabel,
+          reasoningEffort: decision.reasoningEffort,
+          routing: decision,
         },
       };
     },
@@ -723,8 +791,30 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("subagents", {
-    description: "List, inspect, and take over subagents",
-    handler: async (_args, ctx) => {
+    description:
+      "List/take over subagents; use /subagents route for routing diagnostics",
+    handler: async (rawArgs, ctx) => {
+      const command = rawArgs.trim().toLowerCase();
+      if (command === "route") {
+        const manager = await getManager();
+        const [routingState, available] = await Promise.all([
+          loadRoutingState({ agentDir: getAgentDir() }),
+          runTool(getRuntime(), manager.availableBackends),
+        ]);
+        await showRoutingDiagnostics(
+          ctx,
+          routingDiagnosticLines({
+            state: routingState,
+            available,
+            parentProvider: ctx.model?.provider,
+          }),
+        );
+        return;
+      }
+      if (command) {
+        if (ctx.hasUI) ctx.ui.notify("Usage: /subagents [route]", "warning");
+        return;
+      }
       if (ctx.mode !== "tui") {
         if (ctx.hasUI)
           ctx.ui.notify(

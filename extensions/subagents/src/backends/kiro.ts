@@ -612,13 +612,6 @@ function terminateChild(
 
 export const kiroBackend: SubagentBackend = {
   name: "kiro",
-  capabilities: {
-    // One invocation = one turn; nothing can be steered mid-run.
-    steering: false,
-    modelSelection: true,
-    // kiro-cli exposes no reasoning-effort control.
-    reasoningEffort: false,
-  },
   available: Effect.sync(
     () => resolveKiroBinary() !== undefined && kiroLoginPresent(),
   ),

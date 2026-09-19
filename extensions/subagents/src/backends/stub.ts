@@ -43,11 +43,6 @@ let sessionCounter = 0;
 export function makeStubBackend(profile: StubProfile): SubagentBackend {
   return {
     name: profile.backend,
-    capabilities: {
-      steering: true,
-      modelSelection: true,
-      reasoningEffort: true,
-    },
     // Real impls probe binary-on-PATH / SDK import / credentials here.
     available: Effect.succeed(true),
     spawn: (task) => makeStubSession(profile, task),

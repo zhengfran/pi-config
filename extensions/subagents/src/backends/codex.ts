@@ -1053,11 +1053,6 @@ function terminateChild(
 
 export const codexBackend: SubagentBackend = {
   name: "codex",
-  capabilities: {
-    steering: false,
-    modelSelection: true,
-    reasoningEffort: true,
-  },
   available: Effect.sync(() => resolveCodexBinary() !== undefined),
   spawn: makeCodexSession,
 };

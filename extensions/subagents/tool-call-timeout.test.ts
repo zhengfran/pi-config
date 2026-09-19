@@ -7,7 +7,7 @@ import {
   runWithToolCallTimeout,
   CHILD_TOOL_CALL_TIMEOUT_MS,
   ToolCallTimeoutError,
-} from "./tool-call-timeout.ts";
+} from "./src/tool-call-timeout.ts";
 
 test("the production timeout error names the tool and three-minute limit", () => {
   assert.equal(
