@@ -1,4 +1,15 @@
 {
   "version": 1,
-  "environment": "personal"
+  "environment": "personal",
+  "piModels": {
+    "quick": "github-copilot/gpt-5.6-luna",
+    "general": "github-copilot/gpt-5.6-terra",
+    "code_research": "github-copilot/gpt-5.6-terra",
+    "planning": "github-copilot/claude-opus-5",
+    "code_review": "github-copilot/claude-opus-5",
+    "large_refactor": "github-copilot/claude-opus-5",
+    "test_authoring": "github-copilot/claude-sonnet-5",
+    "isolated_implementation": "github-copilot/gpt-5.6-sol",
+    "algorithmic": "github-copilot/gpt-6-astra"
+  }
 }

@@ -449,6 +449,86 @@ test("missing or invalid routing config reports the personal fallback", async ()
   }
 });
 
+test("routing config loads valid piModels and reports rejected entries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "subagent-routing-pi-models-"));
+  const cachePath = join(root, "missing-cache.json");
+  try {
+    await writeFile(
+      join(root, "subagent-routing.json"),
+      JSON.stringify({
+        version: 1,
+        environment: "corporate",
+        piModels: {
+          quick: "github-copilot/gpt-5.6-luna",
+          algorithmic: "gpt-6-astra",
+          unknown_kind: "github-copilot/gpt-5.6-sol",
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const loaded = await loadRoutingState({ agentDir: root, cachePath });
+    assert.equal(loaded.environment, "corporate");
+    assert.deepEqual(loaded.piModels, {
+      quick: "github-copilot/gpt-5.6-luna",
+    });
+    assert.match(loaded.configError ?? "", /algorithmic, unknown_kind/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a configured Pi model is chosen per task kind and uses its provider quota", () => {
+  const piModels = {
+    quick: "github-copilot/gpt-5.6-luna",
+    code_review: "openai-codex/gpt-6-astra",
+  };
+  const quotas = {
+    copilot: quota("copilot", 40),
+    claude: quota("claude", 60),
+    kiro: quota("kiro", 50),
+  };
+
+  const quick = routeSubagent(
+    { taskKind: "quick", available: all, parentProvider: "github-copilot" },
+    { ...state("corporate", quotas), piModels },
+  );
+  assert.equal(quick.harness, "claude");
+  assert.equal(quick.piModel, undefined);
+
+  const piOnly = routeSubagent(
+    {
+      taskKind: "quick",
+      available: new Set<BackendName>(["pi"]),
+      parentProvider: "anthropic",
+    },
+    { ...state("corporate", quotas), piModels },
+  );
+  assert.equal(piOnly.piModel, "github-copilot/gpt-5.6-luna");
+  assert.equal(piOnly.candidates[0]?.provider, "copilot");
+
+  const review = routeSubagent(
+    {
+      taskKind: "code_review",
+      available: new Set<BackendName>(["pi"]),
+      parentProvider: "github-copilot",
+    },
+    { ...state("corporate", quotas), piModels },
+  );
+  assert.equal(review.piModel, "openai-codex/gpt-6-astra");
+  assert.equal(review.candidates[0]?.provider, undefined);
+
+  const unconfigured = routeSubagent(
+    {
+      taskKind: "general",
+      available: new Set<BackendName>(["pi"]),
+      parentProvider: "github-copilot",
+    },
+    { ...state("corporate", quotas), piModels },
+  );
+  assert.equal(unconfigured.piModel, undefined);
+  assert.equal(unconfigured.candidates[0]?.provider, "copilot");
+});
+
 test("routing diagnostics show policy, quota, and effective decisions", () => {
   const lines = routingDiagnosticLines({
     state: state("corporate", {
