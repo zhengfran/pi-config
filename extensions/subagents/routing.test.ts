@@ -59,7 +59,9 @@ const all = new Set<BackendName>(["pi", "claude", "codex", "kiro"]);
 test("task kind selects reasoning effort unless explicitly overridden", () => {
   const expected = {
     general: "medium",
+    quick: "low",
     code_research: "medium",
+    planning: "high",
     code_review: "high",
     large_refactor: "xhigh",
     test_authoring: "high",
@@ -434,7 +436,7 @@ test("routing diagnostics show policy, quota, and effective decisions", () => {
   assert.match(output, /Environment: corporate/);
   assert.match(output, /Shortest-window allowance:/);
   assert.match(output, /Task kinds by category:/);
-  assert.match(output, /analysis: code_research, code_review/);
+  assert.match(output, /analysis: code_research, planning, code_review/);
   assert.match(output, /Task-fit tiers \(before access filtering\):/);
   assert.match(output, /Corporate access requirements \(Kiro-only\):/);
   assert.match(output, /github-ix\.int\.automotive-wan\.com/);

@@ -5,7 +5,9 @@ import type { BackendName, ReasoningEffort } from "./domain.ts";
 
 export const TASK_KINDS = [
   "general",
+  "quick",
   "code_research",
+  "planning",
   "code_review",
   "large_refactor",
   "test_authoring",
@@ -34,7 +36,9 @@ export type UsageProvider = "claude" | "codex" | "copilot" | "kiro";
 
 export const TASK_KIND_CATEGORIES = {
   general: "general",
+  quick: "general",
   code_research: "analysis",
+  planning: "analysis",
   code_review: "analysis",
   large_refactor: "sustained_change",
   test_authoring: "sustained_change",
@@ -44,7 +48,9 @@ export const TASK_KIND_CATEGORIES = {
 
 export const TASK_KIND_REASONING_EFFORTS = {
   general: "medium",
+  quick: "low",
   code_research: "medium",
+  planning: "high",
   code_review: "high",
   large_refactor: "xhigh",
   test_authoring: "high",

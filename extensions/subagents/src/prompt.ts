@@ -23,7 +23,7 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
     "Task prompt for the subagent. Must be self-contained: include all needed context, file paths, and what to report back.",
   name: "Short human-readable name for this subagent, shown in listings and the UI",
   taskKind:
-    "Kind of work used for task-fit routing: code_research/code_review for analysis, large_refactor/test_authoring for sustained changes, isolated_implementation/algorithmic for bounded changes, otherwise general. Remote systems are not task kinds.",
+    "Kind of work used for task-fit routing: quick for trivial lookups, edits, or summaries; code_research/planning/code_review for analysis (planning = designing an approach or architecture without editing); large_refactor/test_authoring for sustained changes, isolated_implementation/algorithmic for bounded changes, otherwise general. Remote systems are not task kinds.",
   requiredAccess:
     'Corporate systems the task must access. Values: "jira" for company Jira, "confluence" for company Confluence, and "github_ix" ONLY for the internal GitHub host github-ix.int.automotive-wan.com. Kiro is the only eligible harness. Omit for public GitHub (including github.com), local clones, and tasks that do not need these systems.',
   harness:
@@ -33,7 +33,7 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
   model:
     'Model hint for an explicit harness override (pi: authenticated "provider/model-id" or an unambiguous available model id; claude: model alias like "sonnet"/"opus"; codex: model slug; kiro: "agent:model", "agent:", or a bare model slug). Omit during automatic routing because model hints are harness-specific.',
   reasoningEffort:
-    "Optional thinking override on the shared off/minimal/low/medium/high/xhigh/max scale. Defaults by task_kind: medium for general/code_research/isolated_implementation, high for code_review/test_authoring, and xhigh for large_refactor/algorithmic. Pi uses it directly, Codex clamps it to model support, Claude passes it as its effort level, and Kiro ignores it.",
+    "Optional thinking override on the shared off/minimal/low/medium/high/xhigh/max scale. Defaults by task_kind: low for quick, medium for general/code_research/isolated_implementation, high for planning/code_review/test_authoring, and xhigh for large_refactor/algorithmic. Pi uses it directly, Codex clamps it to model support, Claude passes it as its effort level, and Kiro ignores it.",
 };
 
 /** Builds the subagent_spawn result that tells the parent model how to continue or inspect the child. */
