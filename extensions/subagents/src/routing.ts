@@ -46,7 +46,7 @@ export const TASK_KIND_REASONING_EFFORTS = {
   general: "medium",
   code_research: "medium",
   code_review: "high",
-  large_refactor: "high",
+  large_refactor: "xhigh",
   test_authoring: "high",
   isolated_implementation: "medium",
   algorithmic: "xhigh",
