@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "environment": "personal",
+  "models": {
+    "quick": [
+      {
+        "harness": "claude",
+        "model": "haiku",
+        "effort": "low"
+      },
+      {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-luna",
+        "effort": "low"
+      }
+    ],
+    "general": [
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-terra",
+        "effort": "medium"
+      }
+    ],
+    "code_research": [
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-terra",
+        "effort": "medium"
+      }
+    ],
+    "planning": [
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "high"
+      }
+    ],
+    "code_review": [
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "high"
+      }
+    ],
+    "large_refactor": [
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "xhigh"
+      }
+    ],
+    "test_authoring": [
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "high"
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-terra",
+        "effort": "high"
+      }
+    ],
+    "isolated_implementation": [
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "medium"
+      },
+      {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-sol",
+        "effort": "medium"
+      }
+    ],
+    "algorithmic": [
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "xhigh"
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-6-astra",
+        "effort": "xhigh"
+      },
+      {
+        "harness": "pi",
+        "model": "openai-codex/gpt-6-astra",
+        "effort": "xhigh"
+      }
+    ]
+  }
+}

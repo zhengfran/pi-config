@@ -45,9 +45,7 @@ Routing keeps two concerns separate:
 
 For the Pi harness, model hints are resolved only against authenticated, available models. A provider-qualified hint fails before spawn if that provider is unavailable; a bare model id never selects an unauthenticated provider and must be unambiguous across the remaining providers.
 
-Both environments can reach every harness; they differ only in preference order, with corporate keeping Kiro ahead of Codex for bounded work.
-
-Create the machine-local configuration at `~/.pi/agent/subagent-routing.json`:
+The repository includes two complete profiles: `subagent-routing.corporate.example.json` uses all configured providers, while `subagent-routing.personal.example.json` removes Kiro and GitHub Copilot model routes. Copy the appropriate profile to the machine-local `~/.pi/agent/subagent-routing.json`:
 
 ```json
 {
@@ -83,7 +81,7 @@ One judgement does cross window kinds, because "almost out" is comparable even w
 - `effort` is optional and falls back to the task-kind default; an explicit `reasoning_effort` on the spawn still wins over both.
 - A configured Pi model draws on its own provider's allowance rather than the parent's — `github-copilot` against the Copilot window, `openai-codex` against the same ChatGPT window the Codex harness spends — and a model that is unavailable fails the spawn rather than falling back. The same GPT model is usually authenticated on both providers, so listing both gives Pi a fallback when one allowance runs down; note that the ChatGPT backend serves them with a smaller context window than Copilot does.
 
-Invalid entries are ignored and reported by `/subagents route`, which also lists the effective candidates per task kind. `subagent-routing.example.json` is a template; the active file is intentionally not tracked because the environment is machine-specific.
+Invalid entries are ignored and reported by `/subagents route`, which also lists the effective candidates per task kind. `subagent-routing.corporate.example.json` and `subagent-routing.personal.example.json` are templates; the active file is intentionally not tracked because the environment is machine-specific.
 
 Run `/subagents route` to inspect the effective environment, backend availability, cache freshness, shortest-window allowance, task-fit tiers, and effective decisions. Routing never blocks on a provider refresh and never retries a failed spawn on another harness. After first enabling the usage package, run `/usage refresh` if you want to prime the cache immediately. An explicit harness override is honored only when the user asks for it.
 

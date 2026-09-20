@@ -1,8 +1,13 @@
 {
   "version": 1,
-  "environment": "personal",
+  "environment": "corporate",
   "models": {
     "quick": [
+      {
+        "harness": "claude",
+        "model": "haiku",
+        "effort": "low"
+      },
       {
         "harness": "pi",
         "model": "github-copilot/gpt-5.6-luna",
@@ -17,14 +22,14 @@
         "harness": "kiro",
         "model": "claude-haiku-4.5",
         "effort": "low"
-      },
-      {
-        "harness": "claude",
-        "model": "haiku",
-        "effort": "low"
       }
     ],
     "general": [
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
       {
         "harness": "pi",
         "model": "github-copilot/gpt-5.6-terra",
@@ -38,16 +43,16 @@
       {
         "harness": "kiro",
         "model": "claude-sonnet-5",
-        "effort": "medium"
-      },
-      {
-        "harness": "claude",
-        "model": "sonnet",
         "effort": "medium"
       }
     ],
     "code_research": [
       {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      {
         "harness": "pi",
         "model": "github-copilot/gpt-5.6-terra",
         "effort": "medium"
@@ -60,11 +65,6 @@
       {
         "harness": "kiro",
         "model": "claude-sonnet-5",
-        "effort": "medium"
-      },
-      {
-        "harness": "claude",
-        "model": "sonnet",
         "effort": "medium"
       }
     ],
@@ -138,6 +138,11 @@
     ],
     "isolated_implementation": [
       {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      {
         "harness": "codex",
         "model": "gpt-5.6-sol",
         "effort": "medium"
@@ -160,6 +165,11 @@
     ],
     "algorithmic": [
       {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "xhigh"
+      },
+      {
         "harness": "codex",
         "model": "gpt-6-astra",
         "effort": "xhigh"
@@ -172,11 +182,6 @@
       {
         "harness": "pi",
         "model": "openai-codex/gpt-6-astra",
-        "effort": "xhigh"
-      },
-      {
-        "harness": "claude",
-        "model": "opus",
         "effort": "xhigh"
       }
     ]
