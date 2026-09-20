@@ -539,20 +539,22 @@ test("kiroModels accepts only Claude models and applies when kiro is routed", as
         version: 1,
         environment: "corporate",
         kiroModels: {
-          quick: "claude-4.5",
-          code_review: "aumo-work:claude-4.5",
-          general: "aumo-work:",
+          quick: "claude-haiku-4.5",
+          code_review: "kiro_default:claude-opus-5",
+          general: "kiro_default:",
+          code_research: "auto",
           planning: "gpt-6-astra",
-          algorithmic: ":claude-4.5",
+          algorithmic: ":claude-opus-5",
         },
       }),
       { mode: 0o600 },
     );
     const loaded = await loadRoutingState({ agentDir: root, cachePath });
     assert.deepEqual(loaded.kiroModels, {
-      quick: "claude-4.5",
-      code_review: "aumo-work:claude-4.5",
-      general: "aumo-work:",
+      quick: "claude-haiku-4.5",
+      code_review: "kiro_default:claude-opus-5",
+      general: "kiro_default:",
+      code_research: "auto",
     });
     assert.match(loaded.configError ?? "", /kiroModels.*planning, algorithmic/);
 
@@ -565,7 +567,7 @@ test("kiroModels accepts only Claude models and applies when kiro is routed", as
       { ...loaded, quotas: {} },
     );
     assert.equal(decision.harness, "kiro");
-    assert.equal(decision.harnessModel, "aumo-work:claude-4.5");
+    assert.equal(decision.harnessModel, "kiro_default:claude-opus-5");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

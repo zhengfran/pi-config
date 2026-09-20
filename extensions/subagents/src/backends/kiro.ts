@@ -229,9 +229,9 @@ function looksLikeLoginPrompt(value: string) {
  * agent prefix, because agent selection (which MCP connectors are wired up)
  * matters more here than model choice; kiro only serves Claude models:
  *
- *   "aumo-work:"            -> agent only, default model
- *   "aumo-work:claude-4.5"  -> agent + model
- *   "claude-4.5"            -> model only, default agent
+ *   "kiro_default:"                 -> agent only, default model
+ *   "kiro_default:claude-opus-5"    -> agent + model
+ *   "claude-opus-5"                 -> model only, default agent
  */
 function parseModelHint(hint: string | undefined) {
   if (!hint) return {};

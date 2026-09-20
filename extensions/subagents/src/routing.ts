@@ -178,15 +178,16 @@ function isPiModelHint(model: string): boolean {
 }
 
 /**
- * Kiro hints are "agent:model", "agent:" or "model". Kiro only serves Claude
- * models, so a named model must be a Claude one; an agent-only hint keeps
- * Kiro's own Claude default.
+ * Kiro hints are "agent:model", "agent:" or "model". Kiro serves only Claude
+ * models plus its own "auto" picker, so a named model must be one of those; an
+ * agent-only hint keeps Kiro's default.
  */
 function isKiroModelHint(model: string): boolean {
   const separator = model.indexOf(":");
   const name = (separator === -1 ? model : model.slice(separator + 1)).trim();
   if (separator !== -1 && model.slice(0, separator).trim() === "") return false;
-  return name === "" ? separator !== -1 : /^claude/i.test(name);
+  if (name === "") return separator !== -1;
+  return /^claude/i.test(name) || name.toLowerCase() === "auto";
 }
 
 const MODEL_MAPS = {
@@ -196,7 +197,7 @@ const MODEL_MAPS = {
   },
   kiroModels: {
     valid: isKiroModelHint,
-    shape: 'a Claude model as "agent:model", "agent:" or "model"',
+    shape: 'a Claude model or "auto", as "agent:model", "agent:" or "model"',
   },
 } as const satisfies Record<
   string,

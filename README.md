@@ -57,8 +57,8 @@ Create the machine-local configuration at `~/.pi/agent/subagent-routing.json`:
     "algorithmic": "github-copilot/gpt-6-astra"
   },
   "kiroModels": {
-    "quick": "claude-4.5",
-    "code_review": "aumo-work:claude-4.5"
+    "quick": "claude-haiku-4.5",
+    "code_review": "kiro_default:claude-opus-5"
   }
 }
 ```
@@ -68,7 +68,7 @@ Use `"personal"` outside the corporate network. If the file is absent or invalid
 `piModels` and `kiroModels` are optional and map a `task_kind` to the model that harness's children should use. Either applies only when the router picks that harness and the spawn carries no explicit `model`; unlisted task kinds keep the harness default, which for Pi is the parent model.
 
 - `piModels` values are provider-qualified (`provider/model-id`), because a bare id can be ambiguous across authenticated providers. The configured model's provider, not the parent's, supplies the Pi quota, and a model that is unavailable fails the spawn rather than falling back.
-- `kiroModels` values are Kiro hints — `agent:model`, `agent:` or `model`. Kiro only serves Claude models, so a named model must be a Claude one; an agent-only value keeps Kiro's own default.
+- `kiroModels` values are Kiro hints — `agent:model`, `agent:` or `model`. Kiro serves only Claude models (`claude-opus-5`, `claude-opus-4.8`, `claude-sonnet-5`, `claude-haiku-4.5`, …) plus its own `auto` picker, so a named model must be one of those; an agent-only value keeps Kiro's default.
 
 Invalid entries are ignored and reported by `/subagents route`, which also lists both effective mappings. `subagent-routing.example.json` is a template; the active file is intentionally not tracked because the environment is machine-specific.
 
