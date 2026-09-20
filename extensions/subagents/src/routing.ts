@@ -469,13 +469,6 @@ export function taskFitTiers(
   taskKind: TaskKind,
   environment: RoutingEnvironment,
 ): ReadonlyArray<ReadonlyArray<BackendName>> {
-  // Algorithmic work runs at xhigh by default; Kiro ignores reasoning effort,
-  // so it is only a last resort rather than a first-tier bounded-change peer.
-  if (taskKind === "algorithmic") {
-    return environment === "corporate"
-      ? [["pi", "claude"], ["kiro"]]
-      : [["codex", "pi"], ["claude"], ["kiro"]];
-  }
   const category = TASK_KIND_CATEGORIES[taskKind];
   if (category === "sustained_change") {
     return environment === "corporate"

@@ -41,7 +41,7 @@ Routing keeps two concerns separate:
 
 - `task_kind` describes the work: general (`general`, `quick`), analysis (`code_research`, `planning`, `code_review`), sustained change (`large_refactor`, `test_authoring`), or bounded change (`isolated_implementation`, `algorithmic`).
 - `required_access` describes corporate toolchain access. Company Jira, company Confluence, and the internal GitHub host `github-ix.int.automotive-wan.com` are Kiro-only requirements. The `github_ix` requirement applies **only** to that internal host; public GitHub such as `github.com` is routed normally from `task_kind` and must not set `github_ix`.
-- `reasoning_effort` optionally overrides thinking. When omitted, the router selects `low` for quick work, `medium` for general research and isolated implementation, `high` for planning, reviews and tests, and `xhigh` for large refactors and algorithmic work. Pi uses the level directly, Codex and Claude translate it, and Kiro currently ignores it.
+- `reasoning_effort` optionally overrides thinking. When omitted, the router selects `low` for quick work, `medium` for general research and isolated implementation, `high` for planning, reviews and tests, and `xhigh` for large refactors and algorithmic work. Pi uses the level directly, and Claude, Codex and Kiro each translate it to their own scale.
 
 For the Pi harness, model hints are resolved only against authenticated, available models. A provider-qualified hint fails before spawn if that provider is unavailable; a bare model id never selects an unauthenticated provider and must be unambiguous across the remaining providers.
 

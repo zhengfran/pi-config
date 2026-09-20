@@ -31,6 +31,7 @@ import { Effect, Queue, Stream } from "effect";
 import type { SubagentBackend, SubagentSession } from "../backend.ts";
 import type {
   QueuedMessage,
+  ReasoningEffort,
   RunOutcome,
   SpawnTask,
   SubagentEvent,
@@ -233,6 +234,23 @@ function looksLikeLoginPrompt(value: string) {
  *   "kiro_default:claude-opus-5"    -> agent + model
  *   "claude-opus-5"                 -> model only, default agent
  */
+/**
+ * kiro-cli 2.21.2 takes --effort low|medium|high|xhigh|max. The shared scale's
+ * off and minimal have no counterpart, so they land on the lowest level kiro
+ * offers; an omitted effort leaves kiro's own default.
+ */
+function kiroEffort(effort: ReasoningEffort | undefined) {
+  switch (effort) {
+    case undefined:
+      return undefined;
+    case "off":
+    case "minimal":
+      return "low";
+    default:
+      return effort;
+  }
+}
+
 function parseModelHint(hint: string | undefined) {
   if (!hint) return {};
   const separator = hint.indexOf(":");
@@ -262,6 +280,7 @@ const makeKiroSession = (
     }
 
     const { agent, model } = parseModelHint(task.model);
+    const effort = kiroEffort(task.reasoningEffort);
 
     const events = yield* Queue.make<SubagentEvent, Cause.Done>();
     const emit = (event: SubagentEvent) => {
@@ -371,6 +390,7 @@ const makeKiroSession = (
         "never",
         ...(agent ? ["--agent", agent] : []),
         ...(model ? ["--model", model] : []),
+        ...(effort ? ["--effort", effort] : []),
         composePrompt(text),
       ];
 
