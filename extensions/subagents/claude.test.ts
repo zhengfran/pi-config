@@ -3,7 +3,11 @@ import test from "node:test";
 import { Effect } from "effect";
 import { SubagentManager } from "./src/manager.ts";
 import { claudeBackend } from "./src/backends/claude.ts";
-import type { ParentContext, SpawnTask } from "./src/domain.ts";
+import type {
+  ParentContext,
+  SpawnTask,
+  SubagentSnapshot,
+} from "./src/domain.ts";
 import { createSubagentRuntime, runTool } from "./src/runtime.ts";
 
 const parent: ParentContext = {
@@ -40,6 +44,11 @@ function deadline<A>(operation: Promise<A>, timeoutMs: number) {
   });
 }
 
+/** Surface the backend's own message: a live failure is usually auth or quota. */
+function failure(snapshot: SubagentSnapshot | undefined) {
+  return `status ${snapshot?.status ?? "missing"}: ${snapshot?.errorText ?? "no error text"}`;
+}
+
 test(
   "Claude backend completes a live manager run",
   { timeout: 60_000 },
@@ -59,7 +68,7 @@ test(
       await deadline(runTool(runtime, manager.waitFor([started.id])), 45_000);
 
       const done = manager.view.get(started.id);
-      assert.equal(done?.status, "done");
+      assert.equal(done?.status, "done", failure(done));
       assert.match(done?.finalText ?? "", /hello claude/i);
       assert.ok(done?.meta.nativeSessionId);
       assert.ok(done?.meta.sessionFilePath?.endsWith(".jsonl"));

@@ -12,7 +12,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect } from "effect";
 import { kiroBackend } from "./src/backends/kiro.ts";
-import type { ParentContext, SpawnTask } from "./src/domain.ts";
+import type {
+  ParentContext,
+  SpawnTask,
+  SubagentSnapshot,
+} from "./src/domain.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { createSubagentRuntime, runTool } from "./src/runtime.ts";
 
@@ -65,7 +69,7 @@ test("kiro backend completes a live run", { timeout: 180_000 }, async (t) => {
     await runTool(runtime, manager.waitFor([spawned.id]));
 
     const done = manager.view.get(spawned.id);
-    assert.equal(done?.status, "done");
+    assert.equal(done?.status, "done", failure(done));
     assert.equal(done?.meta.backend, "kiro");
     assert.match(done?.finalText ?? "", /hello kiro/i);
     // kiro-cli prefixes its answer with a colourised "> "; leaving it in would
@@ -75,6 +79,11 @@ test("kiro backend completes a live run", { timeout: 180_000 }, async (t) => {
     await runtime.dispose();
   }
 });
+
+/** Surface the backend's own message: a live failure is usually auth or quota. */
+function failure(snapshot: SubagentSnapshot | undefined) {
+  return `status ${snapshot?.status ?? "missing"}: ${snapshot?.errorText ?? "no error text"}`;
+}
 
 test(
   "kiro carries context across turns despite one process per turn",
@@ -105,7 +114,7 @@ test(
       await waitForTurns(manager.view, spawned.id, 2, 120_000);
 
       const after = manager.view.get(spawned.id);
-      assert.equal(after?.status, "done");
+      assert.equal(after?.status, "done", failure(after));
       assert.equal(after?.turns, 2);
       // The second turn ran in a brand-new kiro-cli process, so this can only
       // pass if the carried transcript was replayed into the prompt.

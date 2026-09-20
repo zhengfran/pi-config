@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect } from "effect";
 import { codexBackend } from "./src/backends/codex.ts";
-import type { ParentContext, SpawnTask } from "./src/domain.ts";
+import type {
+  ParentContext,
+  SpawnTask,
+  SubagentSnapshot,
+} from "./src/domain.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { createSubagentRuntime, runTool } from "./src/runtime.ts";
 
@@ -37,6 +41,11 @@ async function codexAvailable() {
   return Effect.runPromise(codexBackend.available);
 }
 
+/** Surface the backend's own message: a live failure is usually auth or quota. */
+function failure(snapshot: SubagentSnapshot | undefined) {
+  return `status ${snapshot?.status ?? "missing"}: ${snapshot?.errorText ?? "no error text"}`;
+}
+
 test(
   "Codex backend completes a live manager run",
   { timeout: 75_000 },
@@ -56,7 +65,7 @@ test(
 
       await deadline(runTool(runtime, manager.waitFor([spawned.id])), 60_000);
       const done = manager.view.get(spawned.id);
-      assert.equal(done?.status, "done");
+      assert.equal(done?.status, "done", failure(done));
       assert.match(done?.finalText ?? "", /hello codex/i);
       assert.equal(done?.meta.backend, "codex");
       assert.ok(done?.meta.nativeSessionId);
