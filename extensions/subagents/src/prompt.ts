@@ -31,7 +31,7 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
   workingDir:
     "Trusted working directory for the autonomous child (default: current working directory)",
   model:
-    'Model hint for an explicit harness override (pi: authenticated "provider/model-id" or an unambiguous available model id; claude: model alias like "sonnet"/"opus"; codex: model slug; kiro: "agent:model", "agent:", or a bare model slug). Omit during automatic routing because model hints are harness-specific.',
+    'Model hint for an explicit harness override (pi: authenticated "provider/model-id" or an unambiguous available model id; claude: model alias like "sonnet"/"opus"; codex: model slug; kiro: "agent:model", "agent:", or a bare model slug, always a Claude model). Omit during automatic routing because model hints are harness-specific.',
   reasoningEffort:
     "Optional thinking override on the shared off/minimal/low/medium/high/xhigh/max scale. Defaults by task_kind: low for quick, medium for general/code_research/isolated_implementation, high for planning/code_review/test_authoring, and xhigh for large_refactor/algorithmic. Pi uses it directly, Codex clamps it to model support, Claude passes it as its effort level, and Kiro ignores it.",
 };

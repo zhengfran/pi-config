@@ -86,10 +86,12 @@ export interface RoutingState {
   readonly cacheError?: string;
   readonly quotas: Partial<Record<UsageProvider, ProviderQuota>>;
   /** Machine-local "provider/model-id" defaults for Pi children by task kind. */
-  readonly piModels?: PiModelDefaults;
+  readonly piModels?: ModelDefaults;
+  /** Machine-local Claude-model defaults for Kiro children by task kind. */
+  readonly kiroModels?: ModelDefaults;
 }
 
-export type PiModelDefaults = Readonly<Partial<Record<TaskKind, string>>>;
+export type ModelDefaults = Readonly<Partial<Record<TaskKind, string>>>;
 
 export interface RoutingRequest {
   readonly taskKind: TaskKind;
@@ -117,8 +119,8 @@ export interface RoutingDecision {
   readonly quotaCompared: boolean;
   readonly candidates: ReadonlyArray<CandidateAssessment>;
   readonly reason: string;
-  /** Configured Pi model for this task kind; set only when harness is pi. */
-  readonly piModel?: string;
+  /** Configured model hint for this task kind and harness, when one applies. */
+  readonly harnessModel?: string;
 }
 
 export interface RoutingPaths {
@@ -170,36 +172,68 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
 }
 
+/** Pi needs a provider-qualified id because a bare id can be ambiguous. */
+function isPiModelHint(model: string): boolean {
+  return /^[^/\s]+\/\S+$/.test(model);
+}
+
 /**
- * Keep valid `piModels` entries and report the rest, so one typo does not
- * discard the whole map. Values must be provider-qualified because a bare id
- * can be ambiguous across authenticated providers.
+ * Kiro hints are "agent:model", "agent:" or "model". Kiro only serves Claude
+ * models, so a named model must be a Claude one; an agent-only hint keeps
+ * Kiro's own Claude default.
  */
-function parsePiModels(value: unknown): {
-  piModels?: PiModelDefaults;
-  error?: string;
-} {
+function isKiroModelHint(model: string): boolean {
+  const separator = model.indexOf(":");
+  const name = (separator === -1 ? model : model.slice(separator + 1)).trim();
+  if (separator !== -1 && model.slice(0, separator).trim() === "") return false;
+  return name === "" ? separator !== -1 : /^claude/i.test(name);
+}
+
+const MODEL_MAPS = {
+  piModels: {
+    valid: isPiModelHint,
+    shape: 'a "provider/model-id" value',
+  },
+  kiroModels: {
+    valid: isKiroModelHint,
+    shape: 'a Claude model as "agent:model", "agent:" or "model"',
+  },
+} as const satisfies Record<
+  string,
+  { valid: (model: string) => boolean; shape: string }
+>;
+
+type ModelMapName = keyof typeof MODEL_MAPS;
+
+/**
+ * Keep valid entries and report the rest, so one typo does not discard the
+ * whole map.
+ */
+function parseModelDefaults(
+  name: ModelMapName,
+  value: unknown,
+): { models?: ModelDefaults; error?: string } {
   if (value === undefined) return {};
   const entries = record(value);
-  if (!entries) return { error: "piModels must be an object; ignored" };
-  const piModels: Partial<Record<TaskKind, string>> = {};
+  if (!entries) return { error: `${name} must be an object; ignored` };
+  const models: Partial<Record<TaskKind, string>> = {};
   const rejected: string[] = [];
   for (const [taskKind, model] of Object.entries(entries)) {
     if (
       (TASK_KINDS as ReadonlyArray<string>).includes(taskKind) &&
       typeof model === "string" &&
-      /^[^/\s]+\/\S+$/.test(model)
+      MODEL_MAPS[name].valid(model)
     ) {
-      piModels[taskKind as TaskKind] = model;
+      models[taskKind as TaskKind] = model;
     } else {
       rejected.push(taskKind);
     }
   }
   return {
-    ...(Object.keys(piModels).length > 0 ? { piModels } : {}),
+    ...(Object.keys(models).length > 0 ? { models } : {}),
     ...(rejected.length > 0
       ? {
-          error: `piModels entries need a known task kind and a "provider/model-id" value; ignored: ${rejected.join(", ")}`,
+          error: `${name} entries need a known task kind and ${MODEL_MAPS[name].shape}; ignored: ${rejected.join(", ")}`,
         }
       : {}),
   };
@@ -207,7 +241,8 @@ function parsePiModels(value: unknown): {
 
 async function loadEnvironment(configPath: string): Promise<{
   environment: RoutingEnvironment;
-  piModels?: PiModelDefaults;
+  piModels?: ModelDefaults;
+  kiroModels?: ModelDefaults;
   error?: string;
 }> {
   try {
@@ -220,11 +255,14 @@ async function loadEnvironment(configPath: string): Promise<{
           'routing config must contain version 1 and environment "corporate" or "personal"',
       };
     }
-    const { piModels, error } = parsePiModels(root.piModels);
+    const pi = parseModelDefaults("piModels", root.piModels);
+    const kiro = parseModelDefaults("kiroModels", root.kiroModels);
+    const errors = [pi.error, kiro.error].filter(Boolean);
     return {
       environment,
-      ...(piModels ? { piModels } : {}),
-      ...(error ? { error } : {}),
+      ...(pi.models ? { piModels: pi.models } : {}),
+      ...(kiro.models ? { kiroModels: kiro.models } : {}),
+      ...(errors.length > 0 ? { error: errors.join("; ") } : {}),
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -370,14 +408,17 @@ export async function loadRoutingState(
   const now = paths.now ?? Date.now();
   const configPath = join(paths.agentDir, "subagent-routing.json");
   const cachePath = paths.cachePath ?? defaultCachePath();
-  const [{ environment, piModels, error: configError }, freshnessMinutes] =
-    await Promise.all([
-      loadEnvironment(configPath),
-      loadFreshnessMinutes(paths.agentDir),
-    ]);
+  const [
+    { environment, piModels, kiroModels, error: configError },
+    freshnessMinutes,
+  ] = await Promise.all([
+    loadEnvironment(configPath),
+    loadFreshnessMinutes(paths.agentDir),
+  ]);
   const base = {
     environment,
     ...(piModels ? { piModels } : {}),
+    ...(kiroModels ? { kiroModels } : {}),
     configPath,
     ...(configError ? { configError } : {}),
     freshnessMinutes,
@@ -484,11 +525,14 @@ function providerForHarness(
   return harness;
 }
 
-function configuredPiModel(
+function configuredModel(
+  harness: BackendName,
   request: RoutingRequest,
   state: RoutingState,
 ): string | undefined {
-  return state.piModels?.[request.taskKind];
+  if (harness === "pi") return state.piModels?.[request.taskKind];
+  if (harness === "kiro") return state.kiroModels?.[request.taskKind];
+  return undefined;
 }
 
 function assessCandidate(
@@ -498,7 +542,7 @@ function assessCandidate(
 ): CandidateAssessment {
   // A configured Pi model draws on its own provider's allowance, not the parent's.
   const piModel =
-    harness === "pi" ? configuredPiModel(request, state) : undefined;
+    harness === "pi" ? configuredModel(harness, request, state) : undefined;
   const provider = providerForHarness(
     harness,
     piModel ? piModel.slice(0, piModel.indexOf("/")) : request.parentProvider,
@@ -522,14 +566,13 @@ function formatQuota(candidate: CandidateAssessment): string {
   return `${candidate.quota?.window?.label ?? "allowance"} ${remaining.toFixed(1)}% remaining`;
 }
 
-function piModelField(
+function harnessModelField(
   harness: BackendName,
   request: RoutingRequest,
   state: RoutingState,
-): { piModel?: string } {
-  const piModel =
-    harness === "pi" ? configuredPiModel(request, state) : undefined;
-  return piModel ? { piModel } : {};
+): { harnessModel?: string } {
+  const harnessModel = configuredModel(harness, request, state);
+  return harnessModel ? { harnessModel } : {};
 }
 
 export function routeSubagent(
@@ -566,7 +609,7 @@ export function routeSubagent(
       quotaCompared: false,
       candidates: [candidate],
       reason: `explicit user override selected ${request.override}${accessReason}`,
-      ...piModelField(request.override, request, state),
+      ...harnessModelField(request.override, request, state),
     };
   }
 
@@ -613,7 +656,7 @@ export function routeSubagent(
         : candidates.length === 1
           ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected)})`
           : `${state.environment} task-fit tier ${index + 1}${accessReason}; quota data is incomplete, so fixed order selected ${selected.harness}`,
-      ...piModelField(selected.harness, request, state),
+      ...harnessModelField(selected.harness, request, state),
     };
   }
 
@@ -664,6 +707,12 @@ export function routingDiagnosticLines(options: {
       `  ${taskKind}: ${state.piModels?.[taskKind] ?? "inherit parent model"}`,
     );
   }
+  lines.push("", "Kiro model by task kind (Claude models only):");
+  for (const taskKind of TASK_KINDS) {
+    lines.push(
+      `  ${taskKind}: ${state.kiroModels?.[taskKind] ?? "kiro default"}`,
+    );
+  }
   lines.push("", "Task kinds by category:");
   for (const category of [
     "general",
@@ -699,7 +748,7 @@ export function routingDiagnosticLines(options: {
         { taskKind, available, parentProvider },
         state,
       );
-      const model = decision.piModel ? ` (${decision.piModel})` : "";
+      const model = decision.harnessModel ? ` (${decision.harnessModel})` : "";
       lines.push(
         `  ${taskKind}: ${decision.harness}${model} · ${decision.reason}`,
       );

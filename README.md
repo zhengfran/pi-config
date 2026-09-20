@@ -55,13 +55,22 @@ Create the machine-local configuration at `~/.pi/agent/subagent-routing.json`:
     "quick": "github-copilot/gpt-5.6-luna",
     "code_review": "github-copilot/claude-opus-5",
     "algorithmic": "github-copilot/gpt-6-astra"
+  },
+  "kiroModels": {
+    "quick": "claude-4.5",
+    "code_review": "aumo-work:claude-4.5"
   }
 }
 ```
 
 Use `"personal"` outside the corporate network. If the file is absent or invalid, routing fails safe to the personal policy and reports the configuration problem.
 
-`piModels` is optional and maps a `task_kind` to a provider-qualified model for Pi children. It applies only when the router picks Pi and the spawn carries no explicit `model`; unlisted task kinds inherit the parent model. The configured model's provider, not the parent's, supplies the Pi quota. A configured model that is unavailable fails the spawn rather than falling back. Invalid entries are ignored and reported by `/subagents route`. `subagent-routing.example.json` is a template; the active file is intentionally not tracked because the environment is machine-specific.
+`piModels` and `kiroModels` are optional and map a `task_kind` to the model that harness's children should use. Either applies only when the router picks that harness and the spawn carries no explicit `model`; unlisted task kinds keep the harness default, which for Pi is the parent model.
+
+- `piModels` values are provider-qualified (`provider/model-id`), because a bare id can be ambiguous across authenticated providers. The configured model's provider, not the parent's, supplies the Pi quota, and a model that is unavailable fails the spawn rather than falling back.
+- `kiroModels` values are Kiro hints — `agent:model`, `agent:` or `model`. Kiro only serves Claude models, so a named model must be a Claude one; an agent-only value keeps Kiro's own default.
+
+Invalid entries are ignored and reported by `/subagents route`, which also lists both effective mappings. `subagent-routing.example.json` is a template; the active file is intentionally not tracked because the environment is machine-specific.
 
 Run `/subagents route` to inspect the effective environment, backend availability, cache freshness, shortest-window allowance, task-fit tiers, and effective decisions. Routing never blocks on a provider refresh and never retries a failed spawn on another harness. After first enabling the usage package, run `/usage refresh` if you want to prime the cache immediately. An explicit harness override is honored only when the user asks for it.
 

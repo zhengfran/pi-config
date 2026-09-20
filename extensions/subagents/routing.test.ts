@@ -493,7 +493,7 @@ test("a configured Pi model is chosen per task kind and uses its provider quota"
     { ...state("corporate", quotas), piModels },
   );
   assert.equal(quick.harness, "claude");
-  assert.equal(quick.piModel, undefined);
+  assert.equal(quick.harnessModel, undefined);
 
   const piOnly = routeSubagent(
     {
@@ -503,7 +503,7 @@ test("a configured Pi model is chosen per task kind and uses its provider quota"
     },
     { ...state("corporate", quotas), piModels },
   );
-  assert.equal(piOnly.piModel, "github-copilot/gpt-5.6-luna");
+  assert.equal(piOnly.harnessModel, "github-copilot/gpt-5.6-luna");
   assert.equal(piOnly.candidates[0]?.provider, "copilot");
 
   const review = routeSubagent(
@@ -514,7 +514,7 @@ test("a configured Pi model is chosen per task kind and uses its provider quota"
     },
     { ...state("corporate", quotas), piModels },
   );
-  assert.equal(review.piModel, "openai-codex/gpt-6-astra");
+  assert.equal(review.harnessModel, "openai-codex/gpt-6-astra");
   assert.equal(review.candidates[0]?.provider, undefined);
 
   const unconfigured = routeSubagent(
@@ -525,8 +525,50 @@ test("a configured Pi model is chosen per task kind and uses its provider quota"
     },
     { ...state("corporate", quotas), piModels },
   );
-  assert.equal(unconfigured.piModel, undefined);
+  assert.equal(unconfigured.harnessModel, undefined);
   assert.equal(unconfigured.candidates[0]?.provider, "copilot");
+});
+
+test("kiroModels accepts only Claude models and applies when kiro is routed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "subagent-routing-kiro-models-"));
+  const cachePath = join(root, "missing-cache.json");
+  try {
+    await writeFile(
+      join(root, "subagent-routing.json"),
+      JSON.stringify({
+        version: 1,
+        environment: "corporate",
+        kiroModels: {
+          quick: "claude-4.5",
+          code_review: "aumo-work:claude-4.5",
+          general: "aumo-work:",
+          planning: "gpt-6-astra",
+          algorithmic: ":claude-4.5",
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const loaded = await loadRoutingState({ agentDir: root, cachePath });
+    assert.deepEqual(loaded.kiroModels, {
+      quick: "claude-4.5",
+      code_review: "aumo-work:claude-4.5",
+      general: "aumo-work:",
+    });
+    assert.match(loaded.configError ?? "", /kiroModels.*planning, algorithmic/);
+
+    const decision = routeSubagent(
+      {
+        taskKind: "code_review",
+        available: new Set<BackendName>(["kiro"]),
+        parentProvider: "github-copilot",
+      },
+      { ...loaded, quotas: {} },
+    );
+    assert.equal(decision.harness, "kiro");
+    assert.equal(decision.harnessModel, "aumo-work:claude-4.5");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("routing diagnostics show policy, quota, and effective decisions", () => {

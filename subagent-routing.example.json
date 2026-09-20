@@ -11,5 +11,9 @@
     "test_authoring": "github-copilot/claude-sonnet-5",
     "isolated_implementation": "github-copilot/gpt-5.6-sol",
     "algorithmic": "github-copilot/gpt-6-astra"
+  },
+  "kiroModels": {
+    "quick": "claude-4.5",
+    "code_review": "aumo-work:claude-4.5"
   }
 }

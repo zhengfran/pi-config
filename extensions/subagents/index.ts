@@ -376,8 +376,8 @@ export default function (pi: ExtensionAPI) {
           prompt: params.prompt,
           title,
           cwd,
-          // An explicit hint wins; otherwise Pi takes the task kind's configured model.
-          model: params.model ?? decision.piModel,
+          // An explicit hint wins; otherwise take the task kind's configured model.
+          model: params.model ?? decision.harnessModel,
           reasoningEffort: decision.reasoningEffort,
           parent: {
             parentCwd: ctx.cwd,

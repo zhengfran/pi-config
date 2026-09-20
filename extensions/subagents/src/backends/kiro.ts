@@ -227,7 +227,7 @@ function looksLikeLoginPrompt(value: string) {
 /**
  * `model` is the generic per-backend hint. For kiro it accepts an optional
  * agent prefix, because agent selection (which MCP connectors are wired up)
- * matters more here than model choice:
+ * matters more here than model choice; kiro only serves Claude models:
  *
  *   "aumo-work:"            -> agent only, default model
  *   "aumo-work:claude-4.5"  -> agent + model
