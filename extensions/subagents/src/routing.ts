@@ -161,6 +161,8 @@ export interface RoutingPaths {
 
 const PROVIDERS = ["claude", "codex", "copilot", "kiro"] as const;
 const DEFAULT_FRESHNESS_MINUTES = 5;
+/** Below this much left in any window, a candidate moves behind the others. */
+const EXHAUSTED_BELOW_PERCENT = 15;
 const WINDOW_KIND_RANK: Record<WindowKind, number> = Object.fromEntries(
   WINDOW_KINDS.map((kind, index) => [kind, index]),
 ) as Record<WindowKind, number>;
@@ -607,17 +609,29 @@ function assessCandidate(
 }
 
 /**
- * Quota order within one preference group, on the shortest window kind they
- * share; ties and incomparable groups keep the configured order.
+ * A candidate whose own shortest window is nearly spent, whatever its kind.
+ * This is the one cross-kind judgement worth making: "almost out" is
+ * comparable even when the percentages themselves are not.
  */
-function rankByQuota(candidates: ReadonlyArray<CandidateAssessment>): {
+function isNearlyExhausted(candidate: CandidateAssessment): boolean {
+  const quota = candidate.quota;
+  if (!quota?.fresh) return false;
+  const windows = quota.windows ?? (quota.window ? [quota.window] : []);
+  return windows.some(
+    (window) =>
+      window.remainingPercent !== undefined &&
+      window.remainingPercent < EXHAUSTED_BELOW_PERCENT,
+  );
+}
+
+/** Quota order inside one set, on the shortest window kind it shares. */
+function orderBySharedWindow(candidates: ReadonlyArray<CandidateAssessment>): {
   ranked: ReadonlyArray<CandidateAssessment>;
-  quotaCompared: boolean;
   windowKind?: WindowKind;
 } {
   const windowKind =
     candidates.length > 1 ? sharedWindowKind(candidates) : undefined;
-  if (!windowKind) return { ranked: candidates, quotaCompared: false };
+  if (!windowKind) return { ranked: candidates };
   const ranked = candidates
     .map((candidate, order) => ({ candidate, order }))
     .sort(
@@ -627,7 +641,32 @@ function rankByQuota(candidates: ReadonlyArray<CandidateAssessment>): {
         left.order - right.order,
     )
     .map(({ candidate }) => candidate);
-  return { ranked, quotaCompared: true, windowKind };
+  return { ranked, windowKind };
+}
+
+/**
+ * Quota order within one preference group: candidates with allowance left come
+ * first, each set ordered on the shortest window kind it shares. Ties and sets
+ * with no shared kind keep the configured order, so a group is never reordered
+ * on incomparable numbers.
+ */
+function rankByQuota(candidates: ReadonlyArray<CandidateAssessment>): {
+  ranked: ReadonlyArray<CandidateAssessment>;
+  quotaCompared: boolean;
+  windowKind?: WindowKind;
+  demoted: ReadonlyArray<CandidateAssessment>;
+} {
+  const demoted = candidates.filter(isNearlyExhausted);
+  const healthy = candidates.filter(
+    (candidate) => !isNearlyExhausted(candidate),
+  );
+  const { ranked, windowKind } = orderBySharedWindow(healthy);
+  return {
+    ranked: [...ranked, ...orderBySharedWindow(demoted).ranked],
+    quotaCompared: windowKind !== undefined,
+    ...(windowKind ? { windowKind } : {}),
+    demoted,
+  };
 }
 
 /**
@@ -681,6 +720,12 @@ function formatQuota(
   const remaining = window?.remainingPercent;
   if (remaining === undefined) return "quota unavailable";
   return `${window?.label ?? "allowance"} ${remaining.toFixed(1)}% remaining`;
+}
+
+function demotedReason(demoted: ReadonlyArray<CandidateAssessment>): string {
+  return demoted.length === 0
+    ? ""
+    : `; below ${EXHAUSTED_BELOW_PERCENT}% and moved last: ${demoted.map((candidate) => candidate.harness).join(", ")}`;
 }
 
 export function routeSubagent(
@@ -738,7 +783,7 @@ export function routeSubagent(
       harnessSupportsRequiredAccess(entry.harness, requiredAccess),
   );
   if (eligible.length > 0) {
-    const { ranked, quotaCompared, windowKind } = rankByQuota(
+    const { ranked, quotaCompared, windowKind, demoted } = rankByQuota(
       eligible.map((entry) =>
         assessCandidate(entry.harness, request, state, entry),
       ),
@@ -758,10 +803,10 @@ export function routeSubagent(
         quotaCompared,
         candidates: ranked,
         reason: quotaCompared
-          ? `configured models for ${request.taskKind}${accessReason}; ${label} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
+          ? `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; ${label} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
           : ranked.length === 1
-            ? `configured models for ${request.taskKind}${accessReason}; ${label} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
-            : `configured models for ${request.taskKind}${accessReason}; no shared window kind to compare, so configured order selected ${label}`,
+            ? `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; ${label} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
+            : `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; no shared window kind to compare, so configured order selected ${label}`,
         ...(selected.model ? { harnessModel: selected.model } : {}),
       };
     }
@@ -775,7 +820,7 @@ export function routeSubagent(
         harnessSupportsRequiredAccess(name, requiredAccess),
     );
     if (!available || available.length === 0) continue;
-    const { ranked, quotaCompared, windowKind } = rankByQuota(
+    const { ranked, quotaCompared, windowKind, demoted } = rankByQuota(
       available.map((name) => assessCandidate(name, request, state)),
     );
     const selected = ranked[0];
@@ -791,10 +836,10 @@ export function routeSubagent(
       quotaCompared,
       candidates: ranked,
       reason: quotaCompared
-        ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
+        ? `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; ${selected.harness} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
         : ranked.length === 1
-          ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
-          : `${state.environment} task-fit tier ${index + 1}${accessReason}; no shared window kind to compare, so fixed order selected ${selected.harness}`,
+          ? `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
+          : `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; no shared window kind to compare, so fixed order selected ${selected.harness}`,
     };
   }
 

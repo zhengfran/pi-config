@@ -313,8 +313,8 @@ test("unavailable backends are filtered before quota ranking", () => {
 test("Pi quota is comparable only for a GitHub Copilot parent", () => {
   const routingState = state("corporate", {
     copilot: quota("copilot", 100),
-    claude: quota("claude", 10),
-    kiro: quota("kiro", 5),
+    claude: quota("claude", 40),
+    kiro: quota("kiro", 25),
   });
   const copilot = routeSubagent(
     {
@@ -613,7 +613,7 @@ test("quota comparison needs a shared window kind and prefers the five-hour one"
       ...state("corporate", {
         claude: quotaWindows("claude", [
           ["five_hour", 90],
-          ["weekly", 10],
+          ["weekly", 20],
         ]),
         codex: quotaWindows("codex", [["weekly", 80]]),
       }),
@@ -635,10 +635,10 @@ test("quota comparison needs a shared window kind and prefers the five-hour one"
       ...state("corporate", {
         claude: quotaWindows("claude", [
           ["five_hour", 90],
-          ["weekly", 10],
+          ["weekly", 20],
         ]),
         codex: quotaWindows("codex", [
-          ["five_hour", 20],
+          ["five_hour", 25],
           ["weekly", 80],
         ]),
       }),
@@ -657,7 +657,7 @@ test("quota comparison needs a shared window kind and prefers the five-hour one"
     },
     {
       ...state("corporate", {
-        claude: quotaWindows("claude", [["five_hour", 10]]),
+        claude: quotaWindows("claude", [["five_hour", 40]]),
         codex: quotaWindows("codex", [["weekly", 99]]),
       }),
       models,
@@ -666,6 +666,60 @@ test("quota comparison needs a shared window kind and prefers the five-hour one"
   assert.equal(incomparable.harness, "claude");
   assert.equal(incomparable.quotaCompared, false);
   assert.match(incomparable.reason, /no shared window kind/);
+});
+
+test("a nearly exhausted candidate moves behind the others", () => {
+  const models = {
+    code_review: [
+      { harness: "pi" as const, model: "github-copilot/claude-opus-5" },
+      { harness: "kiro" as const, model: "claude-opus-5" },
+      { harness: "claude" as const, model: "opus" },
+    ],
+  };
+  const request = {
+    taskKind: "code_review" as const,
+    available: all,
+    parentProvider: "github-copilot",
+  };
+
+  // Copilot is first in the list but nearly spent, so it drops to the back.
+  const spent = routeSubagent(request, {
+    ...state("corporate", {
+      copilot: quotaWindows("copilot", [["monthly", 4]]),
+      kiro: quotaWindows("kiro", [["monthly", 60]]),
+      claude: quotaWindows("claude", [["five_hour", 80]]),
+    }),
+    models,
+  });
+  assert.equal(spent.harness, "kiro");
+  assert.match(spent.reason, /below 15% and moved last: pi/);
+  assert.deepEqual(
+    spent.candidates.map(({ harness }) => harness),
+    ["kiro", "claude", "pi"],
+  );
+
+  // With allowance left, the configured order stands again.
+  const healthy = routeSubagent(request, {
+    ...state("corporate", {
+      copilot: quotaWindows("copilot", [["monthly", 40]]),
+      kiro: quotaWindows("kiro", [["monthly", 60]]),
+      claude: quotaWindows("claude", [["five_hour", 80]]),
+    }),
+    models,
+  });
+  assert.equal(healthy.harness, "pi");
+  assert.doesNotMatch(healthy.reason, /moved last/);
+
+  // All spent: the group still yields a harness rather than failing.
+  const allSpent = routeSubagent(request, {
+    ...state("corporate", {
+      copilot: quotaWindows("copilot", [["monthly", 1]]),
+      kiro: quotaWindows("kiro", [["monthly", 2]]),
+      claude: quotaWindows("claude", [["five_hour", 3]]),
+    }),
+    models,
+  });
+  assert.equal(allSpent.harness, "pi");
 });
 
 test("routing diagnostics show policy, quota, and effective decisions", () => {
