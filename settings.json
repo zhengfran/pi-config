@@ -6,7 +6,8 @@
   "packages": [
     "npm:pi-web-access@0.15.0",
     "npm:nowledge-mem-pi@0.8.6",
-    "git:github.com/zhengfran/pi-subscription-usage"
+    "git:github.com/zhengfran/pi-subscription-usage",
+    "npm:@narumitw/pi-goal@0.54.8"
   ],
   "markdown": {
     "mermaid": "final"
