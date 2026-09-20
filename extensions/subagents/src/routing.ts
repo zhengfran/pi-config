@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BackendName, ReasoningEffort } from "./domain.ts";
+import { REASONING_EFFORTS } from "./domain.ts";
 
 export const TASK_KINDS = [
   "general",
@@ -85,13 +86,26 @@ export interface RoutingState {
   readonly cacheState: "loaded" | "missing" | "invalid" | "insecure";
   readonly cacheError?: string;
   readonly quotas: Partial<Record<UsageProvider, ProviderQuota>>;
-  /** Machine-local "provider/model-id" defaults for Pi children by task kind. */
-  readonly piModels?: ModelDefaults;
-  /** Machine-local Claude-model defaults for Kiro children by task kind. */
-  readonly kiroModels?: ModelDefaults;
+  /** Machine-local harness/model/effort candidates by task kind. */
+  readonly models?: TaskModelDefaults;
 }
 
-export type ModelDefaults = Readonly<Partial<Record<TaskKind, string>>>;
+/**
+ * One explicitly configured way to run a task kind. Candidates for a task kind
+ * share a preference group: quota reorders them when every available one has
+ * fresh, comparable data, otherwise the configured order stands.
+ */
+export interface TaskModelCandidate {
+  readonly harness: BackendName;
+  /** Harness-specific model hint; omitted keeps that harness's own default. */
+  readonly model?: string;
+  /** Effort for this candidate; omitted falls back to the task-kind default. */
+  readonly effort?: ReasoningEffort;
+}
+
+export type TaskModelDefaults = Readonly<
+  Partial<Record<TaskKind, ReadonlyArray<TaskModelCandidate>>>
+>;
 
 export interface RoutingRequest {
   readonly taskKind: TaskKind;
@@ -106,6 +120,10 @@ export interface CandidateAssessment {
   readonly harness: BackendName;
   readonly provider?: UsageProvider;
   readonly quota?: ProviderQuota;
+  /** Configured model hint this candidate would spawn with. */
+  readonly model?: string;
+  /** Configured effort for this candidate, before the task-kind default. */
+  readonly effort?: ReasoningEffort;
 }
 
 export interface RoutingDecision {
@@ -190,51 +208,85 @@ function isKiroModelHint(model: string): boolean {
   return /^claude/i.test(name) || name.toLowerCase() === "auto";
 }
 
-const MODEL_MAPS = {
-  piModels: {
-    valid: isPiModelHint,
-    shape: 'a "provider/model-id" value',
-  },
-  kiroModels: {
+const MODEL_HINTS: Record<
+  BackendName,
+  { valid: (model: string) => boolean; shape: string }
+> = {
+  pi: { valid: isPiModelHint, shape: '"provider/model-id"' },
+  kiro: {
     valid: isKiroModelHint,
     shape: 'a Claude model or "auto", as "agent:model", "agent:" or "model"',
   },
-} as const satisfies Record<
-  string,
-  { valid: (model: string) => boolean; shape: string }
->;
+  claude: { valid: (model) => /^\S+$/.test(model), shape: "a model alias" },
+  codex: { valid: (model) => /^\S+$/.test(model), shape: "a model slug" },
+};
 
-type ModelMapName = keyof typeof MODEL_MAPS;
+function parseCandidate(value: unknown): TaskModelCandidate | undefined {
+  const entry = record(value);
+  const harness = entry?.harness;
+  if (
+    typeof harness !== "string" ||
+    !(BACKEND_ORDER as ReadonlyArray<string>).includes(harness)
+  ) {
+    return undefined;
+  }
+  const name = harness as BackendName;
+  const model = entry?.model;
+  if (model !== undefined) {
+    if (typeof model !== "string" || !MODEL_HINTS[name].valid(model)) {
+      return undefined;
+    }
+  }
+  const effort = entry?.effort;
+  if (
+    effort !== undefined &&
+    !(REASONING_EFFORTS as ReadonlyArray<unknown>).includes(effort)
+  ) {
+    return undefined;
+  }
+  return {
+    harness: name,
+    ...(typeof model === "string" ? { model } : {}),
+    ...(effort ? { effort: effort as ReasoningEffort } : {}),
+  };
+}
 
 /**
  * Keep valid entries and report the rest, so one typo does not discard the
- * whole map.
+ * whole map. A task kind whose candidates are all invalid falls back to the
+ * built-in tiers, same as an unlisted one.
  */
-function parseModelDefaults(
-  name: ModelMapName,
-  value: unknown,
-): { models?: ModelDefaults; error?: string } {
+function parseTaskModels(value: unknown): {
+  models?: TaskModelDefaults;
+  error?: string;
+} {
   if (value === undefined) return {};
   const entries = record(value);
-  if (!entries) return { error: `${name} must be an object; ignored` };
-  const models: Partial<Record<TaskKind, string>> = {};
+  if (!entries) return { error: "models must be an object; ignored" };
+  const models: Partial<Record<TaskKind, ReadonlyArray<TaskModelCandidate>>> =
+    {};
   const rejected: string[] = [];
-  for (const [taskKind, model] of Object.entries(entries)) {
+  for (const [taskKind, listed] of Object.entries(entries)) {
     if (
-      (TASK_KINDS as ReadonlyArray<string>).includes(taskKind) &&
-      typeof model === "string" &&
-      MODEL_MAPS[name].valid(model)
+      !(TASK_KINDS as ReadonlyArray<string>).includes(taskKind) ||
+      !Array.isArray(listed)
     ) {
-      models[taskKind as TaskKind] = model;
-    } else {
       rejected.push(taskKind);
+      continue;
     }
+    const candidates: TaskModelCandidate[] = [];
+    for (const [index, item] of listed.entries()) {
+      const candidate = parseCandidate(item);
+      if (candidate) candidates.push(candidate);
+      else rejected.push(`${taskKind}[${index}]`);
+    }
+    if (candidates.length > 0) models[taskKind as TaskKind] = candidates;
   }
   return {
     ...(Object.keys(models).length > 0 ? { models } : {}),
     ...(rejected.length > 0
       ? {
-          error: `${name} entries need a known task kind and ${MODEL_MAPS[name].shape}; ignored: ${rejected.join(", ")}`,
+          error: `models entries need a known task kind and a list of {harness, model?, effort?}; ignored: ${rejected.join(", ")}`,
         }
       : {}),
   };
@@ -242,8 +294,7 @@ function parseModelDefaults(
 
 async function loadEnvironment(configPath: string): Promise<{
   environment: RoutingEnvironment;
-  piModels?: ModelDefaults;
-  kiroModels?: ModelDefaults;
+  models?: TaskModelDefaults;
   error?: string;
 }> {
   try {
@@ -256,14 +307,11 @@ async function loadEnvironment(configPath: string): Promise<{
           'routing config must contain version 1 and environment "corporate" or "personal"',
       };
     }
-    const pi = parseModelDefaults("piModels", root.piModels);
-    const kiro = parseModelDefaults("kiroModels", root.kiroModels);
-    const errors = [pi.error, kiro.error].filter(Boolean);
+    const { models, error } = parseTaskModels(root.models);
     return {
       environment,
-      ...(pi.models ? { piModels: pi.models } : {}),
-      ...(kiro.models ? { kiroModels: kiro.models } : {}),
-      ...(errors.length > 0 ? { error: errors.join("; ") } : {}),
+      ...(models ? { models } : {}),
+      ...(error ? { error } : {}),
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -409,17 +457,14 @@ export async function loadRoutingState(
   const now = paths.now ?? Date.now();
   const configPath = join(paths.agentDir, "subagent-routing.json");
   const cachePath = paths.cachePath ?? defaultCachePath();
-  const [
-    { environment, piModels, kiroModels, error: configError },
-    freshnessMinutes,
-  ] = await Promise.all([
-    loadEnvironment(configPath),
-    loadFreshnessMinutes(paths.agentDir),
-  ]);
+  const [{ environment, models, error: configError }, freshnessMinutes] =
+    await Promise.all([
+      loadEnvironment(configPath),
+      loadFreshnessMinutes(paths.agentDir),
+    ]);
   const base = {
     environment,
-    ...(piModels ? { piModels } : {}),
-    ...(kiroModels ? { kiroModels } : {}),
+    ...(models ? { models } : {}),
     configPath,
     ...(configError ? { configError } : {}),
     freshnessMinutes,
@@ -472,24 +517,29 @@ export function taskFitTiers(
   const category = TASK_KIND_CATEGORIES[taskKind];
   if (category === "sustained_change") {
     return environment === "corporate"
-      ? [["claude", "pi"], ["kiro"]]
+      ? [
+          ["claude", "pi"],
+          ["codex", "kiro"],
+        ]
       : [
           ["claude", "pi"],
           ["codex", "kiro"],
         ];
   }
   if (category === "bounded_change") {
+    // Corporate keeps Kiro first for its own allowance; personal prefers Codex.
     return environment === "corporate"
-      ? [["kiro", "pi"], ["claude"]]
+      ? [
+          ["kiro", "pi"],
+          ["codex", "claude"],
+        ]
       : [
           ["codex", "pi"],
           ["claude", "kiro"],
         ];
   }
   if (category === "general" || category === "analysis") {
-    return environment === "corporate"
-      ? [["pi", "claude", "kiro"]]
-      : [["pi", "claude", "kiro"], ["codex"]];
+    return [["pi", "claude", "kiro"], ["codex"]];
   }
   return [["pi"]];
 }
@@ -519,24 +569,21 @@ function providerForHarness(
   return harness;
 }
 
-function configuredModel(
-  harness: BackendName,
+function configuredCandidates(
   request: RoutingRequest,
   state: RoutingState,
-): string | undefined {
-  if (harness === "pi") return state.piModels?.[request.taskKind];
-  if (harness === "kiro") return state.kiroModels?.[request.taskKind];
-  return undefined;
+): ReadonlyArray<TaskModelCandidate> {
+  return state.models?.[request.taskKind] ?? [];
 }
 
 function assessCandidate(
   harness: BackendName,
   request: RoutingRequest,
   state: RoutingState,
+  configured?: TaskModelCandidate,
 ): CandidateAssessment {
   // A configured Pi model draws on its own provider's allowance, not the parent's.
-  const piModel =
-    harness === "pi" ? configuredModel(harness, request, state) : undefined;
+  const piModel = harness === "pi" ? configured?.model : undefined;
   const provider = providerForHarness(
     harness,
     piModel ? piModel.slice(0, piModel.indexOf("/")) : request.parentProvider,
@@ -544,7 +591,32 @@ function assessCandidate(
   return {
     harness,
     ...(provider ? { provider, quota: state.quotas[provider] } : {}),
+    ...(configured?.model ? { model: configured.model } : {}),
+    ...(configured?.effort ? { effort: configured.effort } : {}),
   };
+}
+
+/** Quota order within one preference group; ties keep the configured order. */
+function rankByQuota(candidates: ReadonlyArray<CandidateAssessment>): {
+  ranked: ReadonlyArray<CandidateAssessment>;
+  quotaCompared: boolean;
+} {
+  const quotaCompared =
+    candidates.length > 1 &&
+    candidates.every(
+      (candidate) => comparableRemaining(candidate) !== undefined,
+    );
+  if (!quotaCompared) return { ranked: candidates, quotaCompared };
+  const ranked = candidates
+    .map((candidate, order) => ({ candidate, order }))
+    .sort(
+      (left, right) =>
+        (comparableRemaining(right.candidate) ?? -1) -
+          (comparableRemaining(left.candidate) ?? -1) ||
+        left.order - right.order,
+    )
+    .map(({ candidate }) => candidate);
+  return { ranked, quotaCompared };
 }
 
 function comparableRemaining(
@@ -560,22 +632,13 @@ function formatQuota(candidate: CandidateAssessment): string {
   return `${candidate.quota?.window?.label ?? "allowance"} ${remaining.toFixed(1)}% remaining`;
 }
 
-function harnessModelField(
-  harness: BackendName,
-  request: RoutingRequest,
-  state: RoutingState,
-): { harnessModel?: string } {
-  const harnessModel = configuredModel(harness, request, state);
-  return harnessModel ? { harnessModel } : {};
-}
-
 export function routeSubagent(
   request: RoutingRequest,
   state: RoutingState,
 ): RoutingDecision {
   const requiredAccess = [...new Set(request.requiredAccess ?? [])];
-  const reasoningEffort =
-    request.reasoningEffort ?? TASK_KIND_REASONING_EFFORTS[request.taskKind];
+  const taskEffort = TASK_KIND_REASONING_EFFORTS[request.taskKind];
+  const reasoningEffort = request.reasoningEffort ?? taskEffort;
   const accessReason =
     requiredAccess.length > 0
       ? `; required corporate access: ${requiredAccessLabel(requiredAccess)}`
@@ -591,20 +654,66 @@ export function routeSubagent(
         `Requested subagent harness "${request.override}" cannot provide required corporate access: ${requiredAccessLabel(requiredAccess)}.`,
       );
     }
-    const candidate = assessCandidate(request.override, request, state);
+    const configured = configuredCandidates(request, state).find(
+      (entry) => entry.harness === request.override,
+    );
+    const candidate = assessCandidate(
+      request.override,
+      request,
+      state,
+      configured,
+    );
     return {
       harness: request.override,
       taskKind: request.taskKind,
       requiredAccess,
-      reasoningEffort,
+      reasoningEffort:
+        request.reasoningEffort ?? candidate.effort ?? taskEffort,
       environment: state.environment,
       mode: "override",
       tier: 0,
       quotaCompared: false,
       candidates: [candidate],
       reason: `explicit user override selected ${request.override}${accessReason}`,
-      ...harnessModelField(request.override, request, state),
+      ...(candidate.model ? { harnessModel: candidate.model } : {}),
     };
+  }
+
+  // Explicitly configured candidates form one preference group and win over
+  // the built-in tiers; an unlisted task kind falls back to them.
+  const eligible = configuredCandidates(request, state).filter(
+    (entry) =>
+      request.available.has(entry.harness) &&
+      harnessSupportsRequiredAccess(entry.harness, requiredAccess),
+  );
+  if (eligible.length > 0) {
+    const { ranked, quotaCompared } = rankByQuota(
+      eligible.map((entry) =>
+        assessCandidate(entry.harness, request, state, entry),
+      ),
+    );
+    const selected = ranked[0];
+    if (selected) {
+      const label = `${selected.harness}${selected.model ? ` (${selected.model})` : ""}`;
+      return {
+        harness: selected.harness,
+        taskKind: request.taskKind,
+        requiredAccess,
+        reasoningEffort:
+          request.reasoningEffort ?? selected.effort ?? taskEffort,
+        environment: state.environment,
+        mode: "automatic",
+        tier: 1,
+        quotaCompared,
+        candidates: ranked,
+        reason: quotaCompared
+          ? `configured models for ${request.taskKind}${accessReason}; ${label} has the highest shortest-window allowance (${formatQuota(selected)})`
+          : ranked.length === 1
+            ? `configured models for ${request.taskKind}${accessReason}; ${label} is the only eligible available candidate (${formatQuota(selected)})`
+            : `configured models for ${request.taskKind}${accessReason}; quota data is incomplete, so configured order selected ${label}`,
+        ...(selected.model ? { harnessModel: selected.model } : {}),
+      };
+    }
   }
 
   const tiers = taskFitTiers(request.taskKind, state.environment);
@@ -615,24 +724,9 @@ export function routeSubagent(
         harnessSupportsRequiredAccess(name, requiredAccess),
     );
     if (!available || available.length === 0) continue;
-    const candidates = available.map((name) =>
-      assessCandidate(name, request, state),
+    const { ranked, quotaCompared } = rankByQuota(
+      available.map((name) => assessCandidate(name, request, state)),
     );
-    const quotaComplete = candidates.every(
-      (candidate) => comparableRemaining(candidate) !== undefined,
-    );
-    const quotaCompared = candidates.length > 1 && quotaComplete;
-    const ranked = quotaCompared
-      ? candidates
-          .map((candidate, order) => ({ candidate, order }))
-          .sort(
-            (left, right) =>
-              (comparableRemaining(right.candidate) ?? -1) -
-                (comparableRemaining(left.candidate) ?? -1) ||
-              left.order - right.order,
-          )
-          .map(({ candidate }) => candidate)
-      : candidates;
     const selected = ranked[0];
     if (!selected) continue;
     return {
@@ -647,10 +741,9 @@ export function routeSubagent(
       candidates: ranked,
       reason: quotaCompared
         ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} has the highest shortest-window allowance (${formatQuota(selected)})`
-        : candidates.length === 1
+        : ranked.length === 1
           ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected)})`
           : `${state.environment} task-fit tier ${index + 1}${accessReason}; quota data is incomplete, so fixed order selected ${selected.harness}`,
-      ...harnessModelField(selected.harness, request, state),
     };
   }
 
@@ -695,16 +788,20 @@ export function routingDiagnosticLines(options: {
       `  ${provider}: ${quota.fresh ? "fresh" : "stale"} ${ageLabel(quota.ageMs)} · ${quota.window?.label ?? "no window"}${remaining === undefined ? " · remaining unknown" : ` · ${remaining.toFixed(1)}% remaining`}`,
     );
   }
-  lines.push("", "Pi model by task kind:");
+  lines.push("", "Configured models by task kind (quota orders each list):");
   for (const taskKind of TASK_KINDS) {
+    const configured = state.models?.[taskKind];
     lines.push(
-      `  ${taskKind}: ${state.piModels?.[taskKind] ?? "inherit parent model"}`,
-    );
-  }
-  lines.push("", "Kiro model by task kind (Claude models only):");
-  for (const taskKind of TASK_KINDS) {
-    lines.push(
-      `  ${taskKind}: ${state.kiroModels?.[taskKind] ?? "kiro default"}`,
+      `  ${taskKind}: ${
+        configured && configured.length > 0
+          ? configured
+              .map(
+                (candidate) =>
+                  `${candidate.harness}/${candidate.model ?? "default"} ${candidate.effort ?? TASK_KIND_REASONING_EFFORTS[taskKind]}`,
+              )
+              .join(" · ")
+          : "built-in tiers"
+      }`,
     );
   }
   lines.push("", "Task kinds by category:");

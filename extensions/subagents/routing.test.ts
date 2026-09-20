@@ -124,7 +124,7 @@ test("task fit wins over a lower-tier provider with more allowance", () => {
   assert.equal(decision.tier, 1);
   assert.deepEqual(taskFitTiers("large_refactor", "corporate"), [
     ["claude", "pi"],
-    ["kiro"],
+    ["codex", "kiro"],
   ]);
 });
 
@@ -422,8 +422,8 @@ test("missing or invalid routing config reports the personal fallback", async ()
   }
 });
 
-test("routing config loads valid piModels and reports rejected entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "subagent-routing-pi-models-"));
+test("routing config keeps valid model candidates and reports rejected ones", async () => {
+  const root = await mkdtemp(join(tmpdir(), "subagent-routing-models-"));
   const cachePath = join(root, "missing-cache.json");
   try {
     await writeFile(
@@ -431,119 +431,156 @@ test("routing config loads valid piModels and reports rejected entries", async (
       JSON.stringify({
         version: 1,
         environment: "corporate",
-        piModels: {
-          quick: "github-copilot/gpt-5.6-luna",
-          algorithmic: "gpt-6-astra",
-          unknown_kind: "github-copilot/gpt-5.6-sol",
+        models: {
+          quick: [
+            {
+              harness: "pi",
+              model: "github-copilot/gpt-5.6-luna",
+              effort: "low",
+            },
+            { harness: "kiro", model: "claude-haiku-4.5", effort: "low" },
+            { harness: "claude" },
+          ],
+          code_review: [
+            { harness: "pi", model: "gpt-6-astra" },
+            { harness: "kiro", model: "gpt-6-astra" },
+            { harness: "codex", model: "gpt-5.6-terra", effort: "ludicrous" },
+            { harness: "nonesuch", model: "x" },
+          ],
+          unknown_kind: [{ harness: "pi" }],
         },
       }),
       { mode: 0o600 },
     );
     const loaded = await loadRoutingState({ agentDir: root, cachePath });
-    assert.equal(loaded.environment, "corporate");
-    assert.deepEqual(loaded.piModels, {
-      quick: "github-copilot/gpt-5.6-luna",
+    assert.deepEqual(loaded.models, {
+      quick: [
+        { harness: "pi", model: "github-copilot/gpt-5.6-luna", effort: "low" },
+        { harness: "kiro", model: "claude-haiku-4.5", effort: "low" },
+        { harness: "claude" },
+      ],
     });
-    assert.match(loaded.configError ?? "", /algorithmic, unknown_kind/);
+    // pi needs provider/id, kiro takes Claude models only, and the effort and
+    // harness names must be known values.
+    assert.match(
+      loaded.configError ?? "",
+      /code_review\[0\], code_review\[1\], code_review\[2\], code_review\[3\], unknown_kind/,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("a configured Pi model is chosen per task kind and uses its provider quota", () => {
-  const piModels = {
-    quick: "github-copilot/gpt-5.6-luna",
-    code_review: "openai-codex/gpt-6-astra",
+test("configured candidates win over built-in tiers and carry model and effort", () => {
+  const models = {
+    code_review: [
+      {
+        harness: "kiro" as const,
+        model: "claude-sonnet-5",
+        effort: "high" as const,
+      },
+      {
+        harness: "claude" as const,
+        model: "sonnet-5",
+        effort: "high" as const,
+      },
+      {
+        harness: "codex" as const,
+        model: "gpt-5.6-terra",
+        effort: "high" as const,
+      },
+    ],
+    quick: [
+      {
+        harness: "pi" as const,
+        model: "github-copilot/gpt-5.6-luna",
+        effort: "low" as const,
+      },
+    ],
   };
-  const quotas = {
-    copilot: quota("copilot", 40),
-    claude: quota("claude", 60),
-    kiro: quota("kiro", 50),
+  const configured = {
+    ...state("corporate", {
+      claude: quota("claude", 90),
+      codex: quota("codex", 20),
+      copilot: quota("copilot", 10),
+      kiro: quota("kiro", 50),
+    }),
+    models,
   };
 
-  const quick = routeSubagent(
-    { taskKind: "quick", available: all, parentProvider: "github-copilot" },
-    { ...state("corporate", quotas), piModels },
-  );
-  assert.equal(quick.harness, "claude");
-  assert.equal(quick.harnessModel, undefined);
-
-  const piOnly = routeSubagent(
-    {
-      taskKind: "quick",
-      available: new Set<BackendName>(["pi"]),
-      parentProvider: "anthropic",
-    },
-    { ...state("corporate", quotas), piModels },
-  );
-  assert.equal(piOnly.harnessModel, "github-copilot/gpt-5.6-luna");
-  assert.equal(piOnly.candidates[0]?.provider, "copilot");
-
+  // Same group: the freshest-allowance candidate wins regardless of order.
   const review = routeSubagent(
     {
       taskKind: "code_review",
-      available: new Set<BackendName>(["pi"]),
+      available: all,
       parentProvider: "github-copilot",
     },
-    { ...state("corporate", quotas), piModels },
+    configured,
   );
-  assert.equal(review.harnessModel, "openai-codex/gpt-6-astra");
-  assert.equal(review.candidates[0]?.provider, undefined);
+  assert.equal(review.harness, "claude");
+  assert.equal(review.harnessModel, "sonnet-5");
+  assert.equal(review.reasoningEffort, "high");
+  assert.equal(review.quotaCompared, true);
+  assert.match(review.reason, /configured models for code_review/);
 
-  const unconfigured = routeSubagent(
+  // An unavailable configured harness drops out of the group.
+  const kiroOnly = routeSubagent(
     {
-      taskKind: "general",
-      available: new Set<BackendName>(["pi"]),
+      taskKind: "code_review",
+      available: new Set<BackendName>(["kiro"]),
       parentProvider: "github-copilot",
     },
-    { ...state("corporate", quotas), piModels },
+    configured,
   );
-  assert.equal(unconfigured.harnessModel, undefined);
-  assert.equal(unconfigured.candidates[0]?.provider, "copilot");
-});
+  assert.equal(kiroOnly.harness, "kiro");
+  assert.equal(kiroOnly.harnessModel, "claude-sonnet-5");
 
-test("kiroModels accepts only Claude models and applies when kiro is routed", async () => {
-  const root = await mkdtemp(join(tmpdir(), "subagent-routing-kiro-models-"));
-  const cachePath = join(root, "missing-cache.json");
-  try {
-    await writeFile(
-      join(root, "subagent-routing.json"),
-      JSON.stringify({
-        version: 1,
-        environment: "corporate",
-        kiroModels: {
-          quick: "claude-haiku-4.5",
-          code_review: "kiro_default:claude-opus-5",
-          general: "kiro_default:",
-          code_research: "auto",
-          planning: "gpt-6-astra",
-          algorithmic: ":claude-opus-5",
-        },
-      }),
-      { mode: 0o600 },
-    );
-    const loaded = await loadRoutingState({ agentDir: root, cachePath });
-    assert.deepEqual(loaded.kiroModels, {
-      quick: "claude-haiku-4.5",
-      code_review: "kiro_default:claude-opus-5",
-      general: "kiro_default:",
-      code_research: "auto",
-    });
-    assert.match(loaded.configError ?? "", /kiroModels.*planning, algorithmic/);
+  // A Pi candidate draws on its configured model's provider allowance.
+  const quick = routeSubagent(
+    { taskKind: "quick", available: all, parentProvider: "anthropic" },
+    configured,
+  );
+  assert.equal(quick.harness, "pi");
+  assert.equal(quick.harnessModel, "github-copilot/gpt-5.6-luna");
+  assert.equal(quick.reasoningEffort, "low");
+  assert.equal(quick.candidates[0]?.provider, "copilot");
 
-    const decision = routeSubagent(
-      {
-        taskKind: "code_review",
-        available: new Set<BackendName>(["kiro"]),
-        parentProvider: "github-copilot",
-      },
-      { ...loaded, quotas: {} },
-    );
-    assert.equal(decision.harness, "kiro");
-    assert.equal(decision.harnessModel, "kiro_default:claude-opus-5");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  // An explicit effort still overrides the configured one.
+  const overridden = routeSubagent(
+    {
+      taskKind: "quick",
+      reasoningEffort: "max",
+      available: all,
+      parentProvider: "anthropic",
+    },
+    configured,
+  );
+  assert.equal(overridden.reasoningEffort, "max");
+
+  // Unlisted task kinds keep the built-in tiers and carry no model.
+  const research = routeSubagent(
+    {
+      taskKind: "code_research",
+      available: all,
+      parentProvider: "github-copilot",
+    },
+    configured,
+  );
+  assert.equal(research.harnessModel, undefined);
+  assert.match(research.reason, /task-fit tier/);
+
+  // A harness override takes its model and effort from the configured entry.
+  const override = routeSubagent(
+    {
+      taskKind: "code_review",
+      override: "codex",
+      available: all,
+      parentProvider: "github-copilot",
+    },
+    configured,
+  );
+  assert.equal(override.harnessModel, "gpt-5.6-terra");
+  assert.equal(override.reasoningEffort, "high");
 });
 
 test("routing diagnostics show policy, quota, and effective decisions", () => {

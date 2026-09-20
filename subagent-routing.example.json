@@ -1,26 +1,159 @@
 {
   "version": 1,
   "environment": "personal",
-  "piModels": {
-    "quick": "github-copilot/gpt-5.6-luna",
-    "general": "github-copilot/gpt-5.6-terra",
-    "code_research": "github-copilot/gpt-5.6-terra",
-    "planning": "github-copilot/claude-opus-5",
-    "code_review": "github-copilot/claude-opus-5",
-    "large_refactor": "github-copilot/claude-opus-5",
-    "test_authoring": "github-copilot/claude-sonnet-5",
-    "isolated_implementation": "github-copilot/gpt-5.6-sol",
-    "algorithmic": "github-copilot/gpt-6-astra"
-  },
-  "kiroModels": {
-    "quick": "claude-haiku-4.5",
-    "general": "claude-sonnet-5",
-    "code_research": "claude-sonnet-5",
-    "planning": "kiro_planner:claude-opus-5",
-    "code_review": "claude-opus-5",
-    "large_refactor": "claude-opus-5",
-    "test_authoring": "claude-sonnet-5",
-    "isolated_implementation": "claude-sonnet-5",
-    "algorithmic": "claude-opus-5"
+  "models": {
+    "quick": [
+      {
+        "harness": "pi",
+        "model": "github-copilot/gpt-5.6-luna",
+        "effort": "low"
+      },
+      {
+        "harness": "kiro",
+        "model": "claude-haiku-4.5",
+        "effort": "low"
+      },
+      {
+        "harness": "claude",
+        "model": "haiku",
+        "effort": "low"
+      }
+    ],
+    "general": [
+      {
+        "harness": "pi",
+        "model": "github-copilot/gpt-5.6-terra",
+        "effort": "medium"
+      },
+      {
+        "harness": "kiro",
+        "model": "claude-sonnet-5",
+        "effort": "medium"
+      },
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      }
+    ],
+    "code_research": [
+      {
+        "harness": "pi",
+        "model": "github-copilot/gpt-5.6-terra",
+        "effort": "medium"
+      },
+      {
+        "harness": "kiro",
+        "model": "claude-sonnet-5",
+        "effort": "medium"
+      },
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "medium"
+      }
+    ],
+    "planning": [
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "high"
+      },
+      {
+        "harness": "kiro",
+        "model": "kiro_planner:claude-opus-5",
+        "effort": "high"
+      },
+      {
+        "harness": "pi",
+        "model": "github-copilot/claude-opus-5",
+        "effort": "high"
+      }
+    ],
+    "code_review": [
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "high"
+      },
+      {
+        "harness": "kiro",
+        "model": "claude-opus-5",
+        "effort": "high"
+      },
+      {
+        "harness": "pi",
+        "model": "github-copilot/claude-opus-5",
+        "effort": "high"
+      }
+    ],
+    "large_refactor": [
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "xhigh"
+      },
+      {
+        "harness": "kiro",
+        "model": "claude-opus-5",
+        "effort": "xhigh"
+      },
+      {
+        "harness": "pi",
+        "model": "github-copilot/claude-opus-5",
+        "effort": "xhigh"
+      }
+    ],
+    "test_authoring": [
+      {
+        "harness": "claude",
+        "model": "sonnet",
+        "effort": "high"
+      },
+      {
+        "harness": "kiro",
+        "model": "claude-sonnet-5",
+        "effort": "high"
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-terra",
+        "effort": "high"
+      }
+    ],
+    "isolated_implementation": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "medium"
+      },
+      {
+        "harness": "pi",
+        "model": "github-copilot/gpt-5.6-sol",
+        "effort": "medium"
+      },
+      {
+        "harness": "kiro",
+        "model": "claude-sonnet-5",
+        "effort": "medium"
+      }
+    ],
+    "algorithmic": [
+      {
+        "harness": "codex",
+        "model": "gpt-6-astra",
+        "effort": "xhigh"
+      },
+      {
+        "harness": "pi",
+        "model": "github-copilot/gpt-6-astra",
+        "effort": "xhigh"
+      },
+      {
+        "harness": "claude",
+        "model": "opus",
+        "effort": "xhigh"
+      }
+    ]
   }
 }

@@ -45,32 +45,41 @@ Routing keeps two concerns separate:
 
 For the Pi harness, model hints are resolved only against authenticated, available models. A provider-qualified hint fails before spawn if that provider is unavailable; a bare model id never selects an unauthenticated provider and must be unambiguous across the remaining providers.
 
+Both environments can reach every harness; they differ only in preference order, with corporate keeping Kiro ahead of Codex for bounded work.
+
 Create the machine-local configuration at `~/.pi/agent/subagent-routing.json`:
 
 ```json
 {
   "version": 1,
   "environment": "corporate",
-  "piModels": {
-    "quick": "github-copilot/gpt-5.6-luna",
-    "code_review": "github-copilot/claude-opus-5",
-    "algorithmic": "github-copilot/gpt-6-astra"
-  },
-  "kiroModels": {
-    "quick": "claude-haiku-4.5",
-    "code_review": "kiro_default:claude-opus-5"
+  "models": {
+    "code_review": [
+      { "harness": "kiro", "model": "claude-sonnet-5", "effort": "high" },
+      { "harness": "claude", "model": "sonnet", "effort": "high" },
+      { "harness": "codex", "model": "gpt-5.6-terra", "effort": "high" }
+    ],
+    "quick": [
+      {
+        "harness": "pi",
+        "model": "github-copilot/gpt-5.6-luna",
+        "effort": "low"
+      }
+    ]
   }
 }
 ```
 
 Use `"personal"` outside the corporate network. If the file is absent or invalid, routing fails safe to the personal policy and reports the configuration problem.
 
-`piModels` and `kiroModels` are optional and map a `task_kind` to the model that harness's children should use. Either applies only when the router picks that harness and the spawn carries no explicit `model`; unlisted task kinds keep the harness default, which for Pi is the parent model.
+`models` is optional and lists, per `task_kind`, every way that task may run: `{ "harness": …, "model": …, "effort": … }`. The list is one preference group — availability and `required_access` filter it, then allowance ordering picks the winner when every remaining candidate has fresh, comparable data; otherwise the listed order stands. A configured list replaces the built-in tiers and the environment policy for that task kind, so a corporate machine can list Codex here deliberately. Unlisted task kinds fall back to the built-in tiers.
 
-- `piModels` values are provider-qualified (`provider/model-id`), because a bare id can be ambiguous across authenticated providers. The configured model's provider, not the parent's, supplies the Pi quota, and a model that is unavailable fails the spawn rather than falling back.
-- `kiroModels` values are Kiro hints — `agent:model`, `agent:` or `model`. Kiro serves only Claude models (`claude-opus-5`, `claude-opus-4.8`, `claude-sonnet-5`, `claude-haiku-4.5`, …) plus its own `auto` picker, so a named model must be one of those; an agent-only value keeps Kiro's default.
+- `model` is optional and harness-specific: Pi takes a provider-qualified `provider/model-id` (a bare id is ambiguous across authenticated providers), Claude a model alias, Codex a model slug, and Kiro an `agent:model`, `agent:` or `model` hint. Omitting it keeps that harness's own default, which for Pi is the parent model.
+- Kiro serves only Claude models (`claude-opus-5`, `claude-opus-4.8`, `claude-sonnet-5`, `claude-haiku-4.5`, …) plus its own `auto` picker, and `kiro_default` / `kiro_planner` are its agents, so a Kiro entry naming any other model is rejected.
+- `effort` is optional and falls back to the task-kind default; an explicit `reasoning_effort` on the spawn still wins over both.
+- A configured Pi model draws on its own provider's allowance rather than the parent's, and a model that is unavailable fails the spawn rather than falling back.
 
-Invalid entries are ignored and reported by `/subagents route`, which also lists both effective mappings. `subagent-routing.example.json` is a template; the active file is intentionally not tracked because the environment is machine-specific.
+Invalid entries are ignored and reported by `/subagents route`, which also lists the effective candidates per task kind. `subagent-routing.example.json` is a template; the active file is intentionally not tracked because the environment is machine-specific.
 
 Run `/subagents route` to inspect the effective environment, backend availability, cache freshness, shortest-window allowance, task-fit tiers, and effective decisions. Routing never blocks on a provider refresh and never retries a failed spawn on another harness. After first enabling the usage package, run `/usage refresh` if you want to prime the cache immediately. An explicit harness override is honored only when the user asks for it.
 
