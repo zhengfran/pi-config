@@ -571,12 +571,19 @@ function requiredAccessLabel(
   return requiredAccess.length > 0 ? requiredAccess.join(", ") : "none";
 }
 
+/** Pi providers that draw on an allowance the usage cache tracks. */
+const PI_PROVIDER_QUOTAS: Record<string, UsageProvider> = {
+  "github-copilot": "copilot",
+  // Pi on this provider spends the same ChatGPT subscription as the codex CLI.
+  "openai-codex": "codex",
+};
+
 function providerForHarness(
   harness: BackendName,
   parentProvider: string | undefined,
 ): UsageProvider | undefined {
   if (harness === "pi") {
-    return parentProvider === "github-copilot" ? "copilot" : undefined;
+    return parentProvider ? PI_PROVIDER_QUOTAS[parentProvider] : undefined;
   }
   return harness;
 }

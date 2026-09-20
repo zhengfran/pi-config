@@ -81,7 +81,7 @@ One judgement does cross window kinds, because "almost out" is comparable even w
 - `model` is optional and harness-specific: Pi takes a provider-qualified `provider/model-id` (a bare id is ambiguous across authenticated providers), Claude a model alias, Codex a model slug, and Kiro an `agent:model`, `agent:` or `model` hint. Omitting it keeps that harness's own default, which for Pi is the parent model.
 - Kiro serves only Claude models (`claude-opus-5`, `claude-opus-4.8`, `claude-sonnet-5`, `claude-haiku-4.5`, …) plus its own `auto` picker, and `kiro_default` / `kiro_planner` are its agents, so a Kiro entry naming any other model is rejected.
 - `effort` is optional and falls back to the task-kind default; an explicit `reasoning_effort` on the spawn still wins over both.
-- A configured Pi model draws on its own provider's allowance rather than the parent's, and a model that is unavailable fails the spawn rather than falling back.
+- A configured Pi model draws on its own provider's allowance rather than the parent's — `github-copilot` against the Copilot window, `openai-codex` against the same ChatGPT window the Codex harness spends — and a model that is unavailable fails the spawn rather than falling back. The same GPT model is usually authenticated on both providers, so listing both gives Pi a fallback when one allowance runs down; note that the ChatGPT backend serves them with a smaller context window than Copilot does.
 
 Invalid entries are ignored and reported by `/subagents route`, which also lists the effective candidates per task kind. `subagent-routing.example.json` is a template; the active file is intentionally not tracked because the environment is machine-specific.
 

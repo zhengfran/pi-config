@@ -9,6 +9,11 @@
         "effort": "low"
       },
       {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-luna",
+        "effort": "low"
+      },
+      {
         "harness": "kiro",
         "model": "claude-haiku-4.5",
         "effort": "low"
@@ -26,6 +31,11 @@
         "effort": "medium"
       },
       {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-terra",
+        "effort": "medium"
+      },
+      {
         "harness": "kiro",
         "model": "claude-sonnet-5",
         "effort": "medium"
@@ -40,6 +50,11 @@
       {
         "harness": "pi",
         "model": "github-copilot/gpt-5.6-terra",
+        "effort": "medium"
+      },
+      {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-terra",
         "effort": "medium"
       },
       {
@@ -133,6 +148,11 @@
         "effort": "medium"
       },
       {
+        "harness": "pi",
+        "model": "openai-codex/gpt-5.6-sol",
+        "effort": "medium"
+      },
+      {
         "harness": "kiro",
         "model": "claude-sonnet-5",
         "effort": "medium"
@@ -147,6 +167,11 @@
       {
         "harness": "pi",
         "model": "github-copilot/gpt-6-astra",
+        "effort": "xhigh"
+      },
+      {
+        "harness": "pi",
+        "model": "openai-codex/gpt-6-astra",
         "effort": "xhigh"
       },
       {

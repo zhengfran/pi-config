@@ -310,6 +310,31 @@ test("unavailable backends are filtered before quota ranking", () => {
   assert.equal(decision.harness, "kiro");
 });
 
+test("a Pi candidate on the ChatGPT provider spends the codex allowance", () => {
+  const models = {
+    quick: [
+      { harness: "pi" as const, model: "openai-codex/gpt-5.6-luna" },
+      { harness: "claude" as const, model: "haiku" },
+    ],
+  };
+  const decision = routeSubagent(
+    { taskKind: "quick", available: all, parentProvider: "github-copilot" },
+    {
+      ...state("corporate", {
+        codex: quotaWindows("codex", [["weekly", 5]]),
+        claude: quotaWindows("claude", [["five_hour", 80]]),
+        copilot: quotaWindows("copilot", [["monthly", 90]]),
+      }),
+      models,
+    },
+  );
+
+  // The candidate's own provider decides the quota, not the parent session's,
+  // so a nearly spent ChatGPT weekly window demotes it.
+  assert.equal(decision.candidates[0]?.harness, "claude");
+  assert.match(decision.reason, /below 15% and moved last: pi/);
+});
+
 test("Pi quota is comparable only for a GitHub Copilot parent", () => {
   const routingState = state("corporate", {
     copilot: quota("copilot", 100),
