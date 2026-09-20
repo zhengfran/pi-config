@@ -16,6 +16,7 @@ import {
   TASK_KINDS,
   taskFitTiers,
   type ProviderQuota,
+  type QuotaWindow,
   type RoutingEnvironment,
   type RoutingState,
   type UsageProvider,
@@ -26,17 +27,27 @@ function quota(
   remainingPercent: number,
   fresh = true,
 ): ProviderQuota {
+  return quotaWindows(provider, [["five_hour", remainingPercent]], fresh);
+}
+
+function quotaWindows(
+  provider: UsageProvider,
+  windows: ReadonlyArray<[QuotaWindow["kind"], number]>,
+  fresh = true,
+): ProviderQuota {
+  const parsed = windows.map(([kind, remainingPercent]) => ({
+    id: kind,
+    label: kind,
+    kind,
+    remainingPercent,
+  }));
   return {
     provider,
     observedAt: "2026-09-16T00:00:00.000Z",
     ageMs: fresh ? 0 : 3_600_000,
     fresh,
-    window: {
-      id: "shortest",
-      label: "shortest",
-      kind: "five_hour",
-      remainingPercent,
-    },
+    windows: parsed,
+    window: parsed[0],
   };
 }
 
@@ -583,6 +594,80 @@ test("configured candidates win over built-in tiers and carry model and effort",
   assert.equal(override.reasoningEffort, "high");
 });
 
+test("quota comparison needs a shared window kind and prefers the five-hour one", () => {
+  const models = {
+    code_review: [
+      { harness: "claude" as const, model: "opus" },
+      { harness: "codex" as const, model: "gpt-6-astra" },
+    ],
+  };
+
+  // claude reports five_hour + weekly, codex only weekly: compare on weekly.
+  const weekly = routeSubagent(
+    {
+      taskKind: "code_review",
+      available: all,
+      parentProvider: "github-copilot",
+    },
+    {
+      ...state("corporate", {
+        claude: quotaWindows("claude", [
+          ["five_hour", 90],
+          ["weekly", 10],
+        ]),
+        codex: quotaWindows("codex", [["weekly", 80]]),
+      }),
+      models,
+    },
+  );
+  assert.equal(weekly.harness, "codex");
+  assert.equal(weekly.quotaCompared, true);
+  assert.match(weekly.reason, /highest weekly allowance/);
+
+  // Both report a five-hour window: it wins over the weekly one.
+  const fiveHour = routeSubagent(
+    {
+      taskKind: "code_review",
+      available: all,
+      parentProvider: "github-copilot",
+    },
+    {
+      ...state("corporate", {
+        claude: quotaWindows("claude", [
+          ["five_hour", 90],
+          ["weekly", 10],
+        ]),
+        codex: quotaWindows("codex", [
+          ["five_hour", 20],
+          ["weekly", 80],
+        ]),
+      }),
+      models,
+    },
+  );
+  assert.equal(fiveHour.harness, "claude");
+  assert.match(fiveHour.reason, /highest five-hour allowance/);
+
+  // No shared kind: the configured order stands.
+  const incomparable = routeSubagent(
+    {
+      taskKind: "code_review",
+      available: all,
+      parentProvider: "github-copilot",
+    },
+    {
+      ...state("corporate", {
+        claude: quotaWindows("claude", [["five_hour", 10]]),
+        codex: quotaWindows("codex", [["weekly", 99]]),
+      }),
+      models,
+    },
+  );
+  assert.equal(incomparable.harness, "claude");
+  assert.equal(incomparable.quotaCompared, false);
+  assert.match(incomparable.reason, /no shared window kind/);
+});
+
 test("routing diagnostics show policy, quota, and effective decisions", () => {
   const lines = routingDiagnosticLines({
     state: state("corporate", {
@@ -595,7 +680,7 @@ test("routing diagnostics show policy, quota, and effective decisions", () => {
   });
   const output = lines.join("\n");
   assert.match(output, /Environment: corporate/);
-  assert.match(output, /Shortest-window allowance:/);
+  assert.match(output, /Allowance by window/);
   assert.match(output, /Task kinds by category:/);
   assert.match(output, /analysis: code_research, planning, code_review/);
   assert.match(output, /Task-fit tiers \(before access filtering\):/);

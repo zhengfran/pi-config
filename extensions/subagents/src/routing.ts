@@ -59,7 +59,16 @@ export const TASK_KIND_REASONING_EFFORTS = {
   algorithmic: "xhigh",
 } as const satisfies Readonly<Record<TaskKind, ReasoningEffort>>;
 
-type WindowKind = "five_hour" | "weekly" | "monthly" | "model" | "other";
+/** Shortest first, so a group is compared on five-hour allowance when it can. */
+const WINDOW_KINDS = [
+  "five_hour",
+  "weekly",
+  "monthly",
+  "model",
+  "other",
+] as const;
+
+type WindowKind = (typeof WINDOW_KINDS)[number];
 
 export interface QuotaWindow {
   readonly id: string;
@@ -74,7 +83,10 @@ export interface ProviderQuota {
   readonly observedAt: string;
   readonly ageMs: number;
   readonly fresh: boolean;
+  /** Shortest window, for display. */
   readonly window?: QuotaWindow;
+  /** Every parsed window, so candidates are compared on a shared kind. */
+  readonly windows?: ReadonlyArray<QuotaWindow>;
 }
 
 export interface RoutingState {
@@ -149,13 +161,9 @@ export interface RoutingPaths {
 
 const PROVIDERS = ["claude", "codex", "copilot", "kiro"] as const;
 const DEFAULT_FRESHNESS_MINUTES = 5;
-const WINDOW_KIND_RANK: Record<WindowKind, number> = {
-  five_hour: 0,
-  weekly: 1,
-  monthly: 2,
-  model: 3,
-  other: 4,
-};
+const WINDOW_KIND_RANK: Record<WindowKind, number> = Object.fromEntries(
+  WINDOW_KINDS.map((kind, index) => [kind, index]),
+) as Record<WindowKind, number>;
 
 const CORPORATE_ACCESS_HARNESSES: Record<
   CorporateAccessRequirement,
@@ -391,10 +399,11 @@ function parseWindow(value: unknown, now: number): QuotaWindow | undefined {
   };
 }
 
-function shortestWindow(
+/** Shortest first: five_hour before weekly before monthly, then by remaining. */
+function sortedWindows(
   windows: unknown[],
   now: number,
-): QuotaWindow | undefined {
+): ReadonlyArray<QuotaWindow> {
   const parsed = windows
     .map((value) => parseWindow(value, now))
     .filter((value) => value !== undefined);
@@ -405,7 +414,7 @@ function shortestWindow(
       (left.remainingPercent ?? Infinity) -
       (right.remainingPercent ?? Infinity);
     return remaining || left.id.localeCompare(right.id);
-  })[0];
+  });
 }
 
 function parseQuota(
@@ -431,7 +440,8 @@ function parseQuota(
     observedAt: snapshot.observedAt,
     ageMs,
     fresh: observed <= now + 60_000 && ageMs <= freshnessMs,
-    window: shortestWindow(snapshot.windows, now),
+    windows: sortedWindows(snapshot.windows, now),
+    window: sortedWindows(snapshot.windows, now)[0],
   };
 }
 
@@ -596,40 +606,81 @@ function assessCandidate(
   };
 }
 
-/** Quota order within one preference group; ties keep the configured order. */
+/**
+ * Quota order within one preference group, on the shortest window kind they
+ * share; ties and incomparable groups keep the configured order.
+ */
 function rankByQuota(candidates: ReadonlyArray<CandidateAssessment>): {
   ranked: ReadonlyArray<CandidateAssessment>;
   quotaCompared: boolean;
+  windowKind?: WindowKind;
 } {
-  const quotaCompared =
-    candidates.length > 1 &&
-    candidates.every(
-      (candidate) => comparableRemaining(candidate) !== undefined,
-    );
-  if (!quotaCompared) return { ranked: candidates, quotaCompared };
+  const windowKind =
+    candidates.length > 1 ? sharedWindowKind(candidates) : undefined;
+  if (!windowKind) return { ranked: candidates, quotaCompared: false };
   const ranked = candidates
     .map((candidate, order) => ({ candidate, order }))
     .sort(
       (left, right) =>
-        (comparableRemaining(right.candidate) ?? -1) -
-          (comparableRemaining(left.candidate) ?? -1) ||
+        (comparableRemaining(right.candidate, windowKind) ?? -1) -
+          (comparableRemaining(left.candidate, windowKind) ?? -1) ||
         left.order - right.order,
     )
     .map(({ candidate }) => candidate);
-  return { ranked, quotaCompared };
+  return { ranked, quotaCompared: true, windowKind };
+}
+
+/**
+ * Percentages of different window kinds are not comparable: 20% of a 5-hour
+ * window says something else than 20% of a monthly one. A candidate therefore
+ * only reports a number for the kind the whole group is being compared on.
+ */
+function windowOfKind(
+  candidate: CandidateAssessment,
+  kind: WindowKind,
+): QuotaWindow | undefined {
+  const quota = candidate.quota;
+  if (!quota?.fresh) return undefined;
+  const windows = quota.windows ?? (quota.window ? [quota.window] : []);
+  return windows.find(
+    (window) => window.kind === kind && window.remainingPercent !== undefined,
+  );
 }
 
 function comparableRemaining(
   candidate: CandidateAssessment,
+  kind: WindowKind,
 ): number | undefined {
-  const quota = candidate.quota;
-  return quota?.fresh ? quota.window?.remainingPercent : undefined;
+  return windowOfKind(candidate, kind)?.remainingPercent;
 }
 
-function formatQuota(candidate: CandidateAssessment): string {
-  const remaining = comparableRemaining(candidate);
+/**
+ * The shortest window kind every candidate reports, so a group is ranked on
+ * five-hour allowance when they all have one, then weekly, and so on.
+ */
+function sharedWindowKind(
+  candidates: ReadonlyArray<CandidateAssessment>,
+): WindowKind | undefined {
+  if (candidates.length === 0) return undefined;
+  return WINDOW_KINDS.find((kind) =>
+    candidates.every(
+      (candidate) => comparableRemaining(candidate, kind) !== undefined,
+    ),
+  );
+}
+
+function windowLabel(kind: WindowKind | undefined): string {
+  return kind ? kind.replace("_", "-") : "shortest-window";
+}
+
+function formatQuota(
+  candidate: CandidateAssessment,
+  kind: WindowKind | undefined,
+): string {
+  const window = kind ? windowOfKind(candidate, kind) : candidate.quota?.window;
+  const remaining = window?.remainingPercent;
   if (remaining === undefined) return "quota unavailable";
-  return `${candidate.quota?.window?.label ?? "allowance"} ${remaining.toFixed(1)}% remaining`;
+  return `${window?.label ?? "allowance"} ${remaining.toFixed(1)}% remaining`;
 }
 
 export function routeSubagent(
@@ -687,7 +738,7 @@ export function routeSubagent(
       harnessSupportsRequiredAccess(entry.harness, requiredAccess),
   );
   if (eligible.length > 0) {
-    const { ranked, quotaCompared } = rankByQuota(
+    const { ranked, quotaCompared, windowKind } = rankByQuota(
       eligible.map((entry) =>
         assessCandidate(entry.harness, request, state, entry),
       ),
@@ -707,10 +758,10 @@ export function routeSubagent(
         quotaCompared,
         candidates: ranked,
         reason: quotaCompared
-          ? `configured models for ${request.taskKind}${accessReason}; ${label} has the highest shortest-window allowance (${formatQuota(selected)})`
+          ? `configured models for ${request.taskKind}${accessReason}; ${label} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
           : ranked.length === 1
-            ? `configured models for ${request.taskKind}${accessReason}; ${label} is the only eligible available candidate (${formatQuota(selected)})`
-            : `configured models for ${request.taskKind}${accessReason}; quota data is incomplete, so configured order selected ${label}`,
+            ? `configured models for ${request.taskKind}${accessReason}; ${label} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
+            : `configured models for ${request.taskKind}${accessReason}; no shared window kind to compare, so configured order selected ${label}`,
         ...(selected.model ? { harnessModel: selected.model } : {}),
       };
     }
@@ -724,7 +775,7 @@ export function routeSubagent(
         harnessSupportsRequiredAccess(name, requiredAccess),
     );
     if (!available || available.length === 0) continue;
-    const { ranked, quotaCompared } = rankByQuota(
+    const { ranked, quotaCompared, windowKind } = rankByQuota(
       available.map((name) => assessCandidate(name, request, state)),
     );
     const selected = ranked[0];
@@ -740,10 +791,10 @@ export function routeSubagent(
       quotaCompared,
       candidates: ranked,
       reason: quotaCompared
-        ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} has the highest shortest-window allowance (${formatQuota(selected)})`
+        ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
         : ranked.length === 1
-          ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected)})`
-          : `${state.environment} task-fit tier ${index + 1}${accessReason}; quota data is incomplete, so fixed order selected ${selected.harness}`,
+          ? `${state.environment} task-fit tier ${index + 1}${accessReason}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
+          : `${state.environment} task-fit tier ${index + 1}${accessReason}; no shared window kind to compare, so fixed order selected ${selected.harness}`,
     };
   }
 
@@ -775,7 +826,7 @@ export function routingDiagnosticLines(options: {
     `Parent provider: ${parentProvider ?? "unknown"}`,
     `Available harnesses: ${BACKEND_ORDER.map((name) => `${name}=${available.has(name) ? "yes" : "no"}`).join(" · ")}`,
     "",
-    "Shortest-window allowance:",
+    "Allowance by window (candidates compare on their shortest shared kind):",
   ];
   for (const provider of PROVIDERS) {
     const quota = state.quotas[provider];
@@ -783,9 +834,18 @@ export function routingDiagnosticLines(options: {
       lines.push(`  ${provider}: unavailable`);
       continue;
     }
-    const remaining = quota.window?.remainingPercent;
+    const windows = quota.windows ?? (quota.window ? [quota.window] : []);
+    const detail =
+      windows.length > 0
+        ? windows
+            .map(
+              (window) =>
+                `${window.kind}/${window.label} ${window.remainingPercent === undefined ? "remaining unknown" : `${window.remainingPercent.toFixed(1)}%`}`,
+            )
+            .join(" · ")
+        : "no window";
     lines.push(
-      `  ${provider}: ${quota.fresh ? "fresh" : "stale"} ${ageLabel(quota.ageMs)} · ${quota.window?.label ?? "no window"}${remaining === undefined ? " · remaining unknown" : ` · ${remaining.toFixed(1)}% remaining`}`,
+      `  ${provider}: ${quota.fresh ? "fresh" : "stale"} ${ageLabel(quota.ageMs)} · ${detail}`,
     );
   }
   lines.push("", "Configured models by task kind (quota orders each list):");
