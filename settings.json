@@ -1,22 +1,22 @@
 {
   "theme": "github-dark-default",
-  "defaultProvider": "github-copilot",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-web-access@0.15.0",
-    "npm:nowledge-mem-pi@0.8.6",
+    "npm:nowledge-mem-pi",
     "git:github.com/zhengfran/pi-subscription-usage",
     "npm:@narumitw/pi-goal@0.54.8"
   ],
   "markdown": {
     "mermaid": "final"
   },
-  "showHardwareCursor": true,
+  "showHardwareCursor": false,
   "terminal": {
     "showTerminalProgress": true
   },
   "showCacheMissNotices": true,
   "quietStartup": true,
-  "lastChangelogVersion": "0.86.0"
+  "lastChangelogVersion": "0.87.0"
 }
