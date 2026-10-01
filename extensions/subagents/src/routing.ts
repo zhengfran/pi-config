@@ -119,6 +119,43 @@ export type TaskModelDefaults = Readonly<
   Partial<Record<TaskKind, ReadonlyArray<TaskModelCandidate>>>
 >;
 
+/**
+ * One profile-declared harness hint (Wayfinder ticket 07 / profile-capability
+ * contract §4). A profile hint's `model`/`effort` sits between an explicit
+ * user override and the machine-local configured candidate in precedence:
+ * user override > profile hint > configured candidate > task-kind default.
+ */
+export interface ProfileHarnessHint {
+  readonly harness: BackendName;
+  readonly model?: string;
+  readonly effort?: ReasoningEffort;
+}
+
+/**
+ * Profile-aware routing input for one `subagent_spawn` call, layered on top
+ * of the existing task-fit tiers and configured candidates rather than
+ * replacing them (contract §3). Omitting `profile` on a `RoutingRequest`
+ * reproduces the pre-profile behavior exactly — this is what keeps legacy
+ * (agent-less) requests unaffected.
+ *
+ * - `harnesses`, when present, both restricts the candidate pool to the
+ *   listed harnesses and supplies each one's model/effort hint. A harness
+ *   with an invalid hint (bad model shape, unknown effort) is dropped from
+ *   the pool — a candidate failure, never a silent fallback to the harness
+ *   default (contract §4).
+ * - `requiresVerifiedEligibility` gates every candidate on
+ *   `RoutingRequest.verifiedEligible`. This router never performs that
+ *   verification itself (e.g. no filesystem/read-only probing here) — it
+ *   only enforces the set the caller's own preflight already checked against
+ *   the profile's hard requirements (contract §3, "do not claim to have
+ *   verified a boundary the router never touched").
+ */
+export interface RoutingProfile {
+  readonly name: string;
+  readonly harnesses?: ReadonlyArray<ProfileHarnessHint>;
+  readonly requiresVerifiedEligibility?: boolean;
+}
+
 export interface RoutingRequest {
   readonly taskKind: TaskKind;
   readonly requiredAccess?: ReadonlyArray<CorporateAccessRequirement>;
@@ -126,6 +163,13 @@ export interface RoutingRequest {
   readonly override?: BackendName;
   readonly available: ReadonlySet<BackendName>;
   readonly parentProvider?: string;
+  /** Profile-declared candidate overrides/filter; see {@link RoutingProfile}. */
+  readonly profile?: RoutingProfile;
+  /**
+   * Harnesses the caller's preflight has independently verified against
+   * `profile.requiresVerifiedEligibility`. Ignored unless that flag is set.
+   */
+  readonly verifiedEligible?: ReadonlySet<BackendName>;
 }
 
 export interface CandidateAssessment {
@@ -151,6 +195,8 @@ export interface RoutingDecision {
   readonly reason: string;
   /** Configured model hint for this task kind and harness, when one applies. */
   readonly harnessModel?: string;
+  /** Name of the profile that shaped this decision, when one was supplied. */
+  readonly profile?: string;
 }
 
 export interface RoutingPaths {
@@ -735,17 +781,105 @@ function demotedReason(demoted: ReadonlyArray<CandidateAssessment>): string {
     : `; below ${EXHAUSTED_BELOW_PERCENT}% and moved last: ${demoted.map((candidate) => candidate.harness).join(", ")}`;
 }
 
+/** A profile hint with an unrecognized model shape or effort is a candidate failure. */
+function isValidProfileHint(hint: ProfileHarnessHint): boolean {
+  if (
+    hint.model !== undefined &&
+    !MODEL_HINTS[hint.harness].valid(hint.model)
+  ) {
+    return false;
+  }
+  return (
+    hint.effort === undefined ||
+    (REASONING_EFFORTS as ReadonlyArray<unknown>).includes(hint.effort)
+  );
+}
+
+/**
+ * A profile's candidate overrides/filter, resolved once per `routeSubagent`
+ * call. Every field defaults to a no-op when `profile` is absent, so a
+ * legacy request (no `profile`) routes exactly as before.
+ */
+interface ResolvedProfile {
+  readonly name?: string;
+  readonly hints: ReadonlyMap<BackendName, ProfileHarnessHint>;
+  readonly eligible: (harness: BackendName) => boolean;
+}
+
+function resolveProfile(request: RoutingRequest): ResolvedProfile {
+  const profile = request.profile;
+  const hints = new Map<BackendName, ProfileHarnessHint>();
+  if (profile?.harnesses) {
+    for (const hint of profile.harnesses) {
+      if (isValidProfileHint(hint)) hints.set(hint.harness, hint);
+    }
+  }
+  const restricted = profile?.harnesses !== undefined;
+  return {
+    ...(profile ? { name: profile.name } : {}),
+    hints,
+    eligible: (harness) => {
+      if (!profile) return true;
+      if (restricted && !hints.has(harness)) return false;
+      if (
+        profile.requiresVerifiedEligibility &&
+        !request.verifiedEligible?.has(harness)
+      ) {
+        return false;
+      }
+      return true;
+    },
+  };
+}
+
+/**
+ * Layers a profile's per-harness hint onto a configured candidate: the hint's
+ * model/effort wins field-by-field, the configured candidate's own value
+ * otherwise stands. Returns `configured` unchanged when there is no hint for
+ * this harness (legacy behavior, and any harness a profile does not mention).
+ */
+function withProfileHint(
+  profile: ResolvedProfile,
+  harness: BackendName,
+  configured: TaskModelCandidate | undefined,
+): TaskModelCandidate | undefined {
+  const hint = profile.hints.get(harness);
+  if (!hint) return configured;
+  const model = hint.model ?? configured?.model;
+  const effort = hint.effort ?? configured?.effort;
+  return {
+    harness,
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+  };
+}
+
+function profileNote(profile: ResolvedProfile): string {
+  return profile.name ? `; profile "${profile.name}"` : "";
+}
+
 export function routeSubagent(
   request: RoutingRequest,
   state: RoutingState,
 ): RoutingDecision {
   const requiredAccess = [...new Set(request.requiredAccess ?? [])];
   const taskEffort = TASK_KIND_REASONING_EFFORTS[request.taskKind];
-  const reasoningEffort = request.reasoningEffort ?? taskEffort;
   const accessReason =
     requiredAccess.length > 0
       ? `; required corporate access: ${requiredAccessLabel(requiredAccess)}`
       : "";
+  const profile = resolveProfile(request);
+
+  // Contract §5: corporate-only Jira/Confluence/internal GitHub access is
+  // Kiro-only (see CORPORATE_ACCESS_HARNESSES), and a profiled request's
+  // profile/messaging guarantees around Kiro are unproven in v1 — reject
+  // rather than silently route there or drop the requirement.
+  if (profile.name && requiredAccess.length > 0) {
+    throw new Error(
+      `Profiled subagent request "${profile.name}" requires corporate access (${requiredAccessLabel(requiredAccess)}), which only Kiro can provide; profiled requests do not support Kiro-only corporate access in v1.`,
+    );
+  }
+
   if (request.override) {
     if (!request.available.has(request.override)) {
       throw new Error(
@@ -757,6 +891,11 @@ export function routeSubagent(
         `Requested subagent harness "${request.override}" cannot provide required corporate access: ${requiredAccessLabel(requiredAccess)}.`,
       );
     }
+    if (!profile.eligible(request.override)) {
+      throw new Error(
+        `Requested subagent harness "${request.override}" is not eligible for profile "${profile.name}": either the profile does not list it, or the caller's preflight did not verify it.`,
+      );
+    }
     const configured = configuredCandidates(request, state).find(
       (entry) => entry.harness === request.override,
     );
@@ -764,7 +903,7 @@ export function routeSubagent(
       request.override,
       request,
       state,
-      configured,
+      withProfileHint(profile, request.override, configured),
     );
     return {
       harness: request.override,
@@ -777,8 +916,9 @@ export function routeSubagent(
       tier: 0,
       quotaCompared: false,
       candidates: [candidate],
-      reason: `explicit user override selected ${request.override}${accessReason}`,
+      reason: `explicit user override selected ${request.override}${accessReason}${profileNote(profile)}`,
       ...(candidate.model ? { harnessModel: candidate.model } : {}),
+      ...(profile.name ? { profile: profile.name } : {}),
     };
   }
 
@@ -787,12 +927,18 @@ export function routeSubagent(
   const eligible = configuredCandidates(request, state).filter(
     (entry) =>
       request.available.has(entry.harness) &&
-      harnessSupportsRequiredAccess(entry.harness, requiredAccess),
+      harnessSupportsRequiredAccess(entry.harness, requiredAccess) &&
+      profile.eligible(entry.harness),
   );
   if (eligible.length > 0) {
     const { ranked, quotaCompared, windowKind, demoted } = rankByQuota(
       eligible.map((entry) =>
-        assessCandidate(entry.harness, request, state, entry),
+        assessCandidate(
+          entry.harness,
+          request,
+          state,
+          withProfileHint(profile, entry.harness, entry),
+        ),
       ),
     );
     const selected = ranked[0];
@@ -810,11 +956,12 @@ export function routeSubagent(
         quotaCompared,
         candidates: ranked,
         reason: quotaCompared
-          ? `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; ${label} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
+          ? `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; ${label} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})${profileNote(profile)}`
           : ranked.length === 1
-            ? `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; ${label} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
-            : `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; no shared window kind to compare, so configured order selected ${label}`,
+            ? `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; ${label} is the only eligible available candidate (${formatQuota(selected, windowKind)})${profileNote(profile)}`
+            : `configured models for ${request.taskKind}${accessReason}${demotedReason(demoted)}; no shared window kind to compare, so configured order selected ${label}${profileNote(profile)}`,
         ...(selected.model ? { harnessModel: selected.model } : {}),
+        ...(profile.name ? { profile: profile.name } : {}),
       };
     }
   }
@@ -824,11 +971,19 @@ export function routeSubagent(
     const available = tiers[index]?.filter(
       (name) =>
         request.available.has(name) &&
-        harnessSupportsRequiredAccess(name, requiredAccess),
+        harnessSupportsRequiredAccess(name, requiredAccess) &&
+        profile.eligible(name),
     );
     if (!available || available.length === 0) continue;
     const { ranked, quotaCompared, windowKind, demoted } = rankByQuota(
-      available.map((name) => assessCandidate(name, request, state)),
+      available.map((name) =>
+        assessCandidate(
+          name,
+          request,
+          state,
+          withProfileHint(profile, name, undefined),
+        ),
+      ),
     );
     const selected = ranked[0];
     if (!selected) continue;
@@ -836,17 +991,19 @@ export function routeSubagent(
       harness: selected.harness,
       taskKind: request.taskKind,
       requiredAccess,
-      reasoningEffort,
+      reasoningEffort: request.reasoningEffort ?? selected.effort ?? taskEffort,
       environment: state.environment,
       mode: "automatic",
       tier: index + 1,
       quotaCompared,
       candidates: ranked,
       reason: quotaCompared
-        ? `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; ${selected.harness} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})`
+        ? `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; ${selected.harness} has the highest ${windowLabel(windowKind)} allowance (${formatQuota(selected, windowKind)})${profileNote(profile)}`
         : ranked.length === 1
-          ? `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected, windowKind)})`
-          : `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; no shared window kind to compare, so fixed order selected ${selected.harness}`,
+          ? `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; ${selected.harness} is the only eligible available candidate (${formatQuota(selected, windowKind)})${profileNote(profile)}`
+          : `${state.environment} task-fit tier ${index + 1}${accessReason}${demotedReason(demoted)}; no shared window kind to compare, so fixed order selected ${selected.harness}${profileNote(profile)}`,
+      ...(selected.model ? { harnessModel: selected.model } : {}),
+      ...(profile.name ? { profile: profile.name } : {}),
     };
   }
 

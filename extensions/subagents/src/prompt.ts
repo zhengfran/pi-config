@@ -2,7 +2,7 @@
 
 /** Describes subagent_spawn, including harnesses and the fixed concurrency cap. */
 export const SUBAGENT_SPAWN_TOOL_DESCRIPTION =
-  "Spawn a background subagent: a fully autonomous, headless agent with its own context window and normal host permissions. Classify the work with task_kind and separately declare any required corporate-system access; a deterministic router chooses the harness and default thinking level from task fit, access eligibility, backend availability, environment policy, and fresh subscription allowance. Set harness only when the user explicitly requests that harness. Fire-and-forget: this returns immediately with an id. The subagent's final output is queued back to you when it settles, or collect it explicitly with subagent_wait. Children cannot orchestrate more agents/workflows or ask the user, and cannot see this conversation, so the prompt must be self-contained. Only use trusted working directories. Max 4 subagents can be running at once across all harnesses.";
+  "Spawn a background subagent: a fully autonomous, headless agent with its own context window and normal host permissions. Optionally select a trusted versioned role with agent; otherwise classify the work with task_kind (required without agent). Separately declare any required corporate-system access; a deterministic router chooses the harness and default thinking level from task fit, access eligibility, backend availability, environment policy, and fresh subscription allowance. Set harness only when the user explicitly requests that harness. Fire-and-forget: this returns immediately with an id. The subagent's final output is queued back to you when it settles, or collect it explicitly with subagent_wait. Children cannot orchestrate more agents/workflows or ask the user, and cannot see this conversation, so the prompt must be self-contained. Only use trusted working directories. Max 4 subagents can be running at once across all harnesses.";
 
 /** Adds background subagent delegation to the parent model's available-tools prompt. */
 export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
@@ -10,7 +10,7 @@ export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
 
 /** Guides the parent model to delegate standalone tasks and avoid unnecessary blocking waits. */
 export const SUBAGENT_SPAWN_PROMPT_GUIDELINES = [
-  "Use subagent_spawn to delegate self-contained tasks that can run in the background; give it a complete, standalone prompt.",
+  "Use subagent_spawn to delegate self-contained tasks that can run in the background; give it a complete, standalone prompt. Set agent only when the user requested a known profile; do not assume a profile exists or discard its restrictions.",
   "Choose task_kind by the work being done, not by the tool being accessed. Use required_access only for company Jira, company Confluence, or github-ix.int.automotive-wan.com; public GitHub does not require github_ix.",
   "Do not choose a harness yourself: omit harness unless the user explicitly requested Pi, Claude Code, Codex, or Kiro.",
   "Omit reasoning_effort to use the task-kind default; set it only when the user explicitly requests a thinking level.",
@@ -23,7 +23,7 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
     "Task prompt for the subagent. Must be self-contained: include all needed context, file paths, and what to report back.",
   name: "Short human-readable name for this subagent, shown in listings and the UI",
   taskKind:
-    "Kind of work used for task-fit routing: quick for trivial lookups, edits, or summaries; code_research/planning/code_review for analysis (planning = designing an approach or architecture without editing); large_refactor/test_authoring for sustained changes, isolated_implementation/algorithmic for bounded changes, otherwise general. Remote systems are not task kinds.",
+    "Required unless agent names a profile with task_kind. Kind of work used for task-fit routing: quick for trivial lookups, edits, or summaries; code_research/planning/code_review for analysis (planning = designing an approach or architecture without editing); large_refactor/test_authoring for sustained changes, isolated_implementation/algorithmic for bounded changes, otherwise general. Remote systems are not task kinds.",
   requiredAccess:
     'Corporate systems the task must access. Values: "jira" for company Jira, "confluence" for company Confluence, and "github_ix" ONLY for the internal GitHub host github-ix.int.automotive-wan.com. Kiro is the only eligible harness. Omit for public GitHub (including github.com), local clones, and tasks that do not need these systems.',
   harness:
@@ -53,6 +53,10 @@ export function buildSubagentSpawnResult(options: {
     `or use subagent_wait(ids: ["${options.id}"]) to block for it, subagent_cancel to stop it, subagent_check to peek, subagent_list to see all.`
   );
 }
+
+/** This early parent-only tool is in-process; it is not a durable relay receipt. */
+export const SUBAGENT_MESSAGE_TOOL_DESCRIPTION =
+  "Send a follow-up to a tracked headless subagent in this Pi session, by its current id or unique local name. Busy children are steered/queued by their backend; successfully settled children may start another turn under the current four-running limit. A successful return means submitted to the local backend only: no durable acceptance, native-delivery or model-processing receipt. Not available after this Pi session exits.";
 
 /** Describes explicit blocking collection of one or more subagent results. */
 export const SUBAGENT_WAIT_TOOL_DESCRIPTION =

@@ -48,6 +48,28 @@ export interface ParentContext {
   readonly modelRegistry?: ModelRegistry;
 }
 
+export interface ProfileLoadout {
+  readonly name: string;
+  readonly profileHash: string;
+  readonly roleText: string;
+  readonly roleDelivery: "any" | "privileged_required";
+  /** Additional tool narrowing only; not a filesystem security boundary. */
+  readonly tools?: ReadonlyArray<string>;
+  readonly allowedTools?: ReadonlyArray<string>;
+  readonly disallowedTools?: ReadonlyArray<string>;
+  readonly requiredCapabilities: ReadonlyArray<string>;
+  readonly allowedRecipients: ReadonlyArray<string>;
+  readonly groupId: string;
+  readonly trustedSource: string;
+  readonly harness?: BackendName;
+  readonly model?: string;
+  readonly effort?: ReasoningEffort;
+  readonly cwd?: string;
+  readonly projectTrusted?: boolean;
+  readonly deliveryChannel?: "system_append" | "developer";
+  readonly routingReason?: string;
+}
+
 export interface SpawnTask {
   /** Omitted for normal tool-driven spawns. */
   readonly origin?: SubagentOrigin;
@@ -63,6 +85,8 @@ export interface SpawnTask {
   readonly model?: string;
   /** Shared effort scale; each backend maps it to its native equivalent. */
   readonly reasoningEffort?: ReasoningEffort;
+  /** Profile snapshot for this run; never reread a changed profile on send. */
+  readonly profileLoadout?: ProfileLoadout;
   readonly parent: ParentContext;
 }
 
@@ -76,6 +100,10 @@ export interface SubagentMeta {
   readonly sessionFilePath?: string;
   /** Claude session id / Codex conversation id. */
   readonly nativeSessionId?: string;
+  /** Identifies an optional profiled instance, not proof of durable ownership. */
+  readonly profileName?: string;
+  readonly profileHash?: string;
+  readonly groupId?: string;
 }
 
 // --- Transcript ------------------------------------------------------------
@@ -199,6 +227,8 @@ export interface SubagentSnapshot {
   readonly title: string;
   readonly prompt: string;
   readonly cwd: string;
+  /** Exact role/capability snapshot used at launch; only a future relay may persist it. */
+  readonly profileLoadout?: ProfileLoadout;
   readonly status: SubagentStatus;
   readonly createdAt: number;
   readonly settledAt?: number;

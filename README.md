@@ -1,8 +1,6 @@
 # pi-config
 
-Personal configuration and local extensions for [Pi](https://github.com/earendil-works/pi/tree/main/packages/coding-agent).
-
-This repository is included in [`dotconfig`](https://github.com/zhengfran/dotconfig) as the `tools/ai/pi` submodule.
+Personal configuration and local extensions for [Pi](https://github.com/earendil-works/pi/tree/main/packages/coding-agent), included in [`dotconfig`](https://github.com/zhengfran/dotconfig) as the `tools/ai/pi` submodule.
 
 ## Install
 
@@ -13,89 +11,94 @@ npm run install:all
 ~/dotconfig/scripts/setup-config.sh
 ```
 
-The setup script keeps `~/.pi/agent` as a real directory and links only the portable resources:
+The setup script keeps `~/.pi/agent` as a real directory and links only portable resources:
 
 ```text
-~/.pi/agent/AGENTS.md    -> global-agents.md
-~/.pi/agent/extensions  -> extensions/
+~/.pi/agent/AGENTS.md      -> global-agents.md
+~/.pi/agent/agents        -> agents/
+~/.pi/agent/extensions    -> extensions/
 ~/.pi/agent/settings.json -> settings.json
-~/.pi/agent/themes      -> themes/
+~/.pi/agent/themes        -> themes/
 ```
 
-It does not replace the agent directory, so authentication, sessions, trust decisions, and Pi-managed packages remain intact.
+Authentication, sessions, trust decisions, and Pi-managed packages remain in the agent directory. Skills are managed independently by [`zzc-skills`](https://github.com/zhengfran/zzc-skills).
 
-## Contents
+## Herdr agents (active)
 
-- `settings.json` — portable Pi settings and installed package declarations
-- `extensions/` — local TypeScript extensions
-- `themes/` — local themes
-- `global-agents.md` — global coding-agent instructions
+`settings.json` loads `git:github.com/zhengfran/pi-herdr-agents`, the public fork that adds native Claude Code and Kiro lifecycle support to the upstream Herdr/worktree orchestrator. Pi manages its checkout under `<agent-dir>/git/github.com/zhengfran/pi-herdr-agents`; no source copy is kept in this config repo. Pi supplies runtime dependencies.
 
-Runtime/private state stays under `~/.pi/agent` and is not tracked here. Skills are managed independently by [`zzc-skills`](https://github.com/zhengfran/zzc-skills); Pi discovers them through `~/.agents/skills`.
-
-## Subagent routing
-
-`extensions/subagents` deterministically selects a harness from the kind of work, required corporate-system access, backend availability, environment policy, and fresh account-wide allowance data from [`pi-subscription-usage`](https://github.com/zhengfran/pi-subscription-usage). The usage package owns refresh and credentials; the router only reads its owner-only, versioned cache.
-
-Routing keeps two concerns separate:
-
-- `task_kind` describes the work: general (`general`, `quick`), analysis (`code_research`, `planning`, `code_review`), sustained change (`large_refactor`, `test_authoring`), or bounded change (`isolated_implementation`, `algorithmic`).
-- `required_access` describes corporate toolchain access. Company Jira, company Confluence, and the internal GitHub host `github-ix.int.automotive-wan.com` are Kiro-only requirements. The `github_ix` requirement applies **only** to that internal host; public GitHub such as `github.com` is routed normally from `task_kind` and must not set `github_ix`.
-- `reasoning_effort` optionally overrides thinking. When omitted, the router selects `low` for quick work, `medium` for general research and isolated implementation, `high` for planning, reviews and tests, and `xhigh` for large refactors and algorithmic work. Pi uses the level directly, and Claude, Codex and Kiro each translate it to their own scale.
-
-For the Pi harness, model hints are resolved only against authenticated, available models. A provider-qualified hint fails before spawn if that provider is unavailable; a bare model id never selects an unauthenticated provider and must be unambiguous across the remaining providers.
-
-The repository includes two complete profiles: `subagent-routing.corporate.example.json` uses all configured providers, while `subagent-routing.personal.example.json` removes Kiro and GitHub Copilot model routes. Copy the appropriate profile to the machine-local `~/.pi/agent/subagent-routing.json`:
-
-```json
-{
-  "version": 1,
-  "environment": "corporate",
-  "models": {
-    "code_review": [
-      { "harness": "kiro", "model": "claude-sonnet-5", "effort": "high" },
-      { "harness": "claude", "model": "sonnet", "effort": "high" },
-      { "harness": "codex", "model": "gpt-5.6-terra", "effort": "high" }
-    ],
-    "quick": [
-      {
-        "harness": "pi",
-        "model": "github-copilot/gpt-5.6-luna",
-        "effort": "low"
-      }
-    ]
-  }
-}
+```bash
+pi install git:github.com/zhengfran/pi-herdr-agents
+# Later, update just this package:
+pi update git:github.com/zhengfran/pi-herdr-agents
 ```
 
-Use `"personal"` outside the corporate network. If the file is absent or invalid, routing fails safe to the personal policy and reports the configuration problem.
+Finish active children before updating, then restart Pi or run `/reload`. Make source changes in a separate development clone and publish them to GitHub; Pi's managed checkout is replaceable package state.
 
-`models` is optional and lists, per `task_kind`, every way that task may run: `{ "harness": …, "model": …, "effort": … }`. The list is one preference group — availability and `required_access` filter it, then allowance ordering picks the winner; otherwise the listed order stands.
+- Package documentation: [zhengfran/pi-herdr-agents](https://github.com/zhengfran/pi-herdr-agents)
+- Upstream acknowledgement: [giuseppecrj/pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents)
+- Personal role overrides: [agents/](agents/) — `scout` (codebase recon), `researcher` (web research), `worker` (implementation)
 
-Allowance ordering compares only like with like: 20% of a five-hour window means something different from 20% of a monthly one. A group is ranked on the **shortest window kind every candidate reports** — five-hour first, then weekly, monthly, per-model and other — and when the candidates share no kind, the configured order stands.
+Start Pi inside **Herdr** with `HERDR_ENV=1`. The package runs Pi-backed and native Claude/Kiro children in dedicated Herdr panes and can provision managed Git worktrees. Other terminal multiplexers are not supported; outside Herdr, role discovery remains available but child launch fails closed.
 
-One judgement does cross window kinds, because "almost out" is comparable even when the percentages are not: a candidate with **under 15% left in any window** moves behind the others, keeping its relative order. If every candidate is that low, the group still yields one rather than failing. `/subagents route` prints each provider's windows, names the kind a decision was made on, and lists any demoted candidate. A configured list replaces the built-in tiers and the environment policy for that task kind, so a corporate machine can list Codex here deliberately. Unlisted task kinds fall back to the built-in tiers.
+Tools:
 
-- `model` is optional and harness-specific: Pi takes a provider-qualified `provider/model-id` (a bare id is ambiguous across authenticated providers), Claude a model alias, Codex a model slug, and Kiro an `agent:model`, `agent:` or `model` hint. Omitting it keeps that harness's own default, which for Pi is the parent model.
-- Kiro serves only Claude models (`claude-opus-5`, `claude-opus-4.8`, `claude-sonnet-5`, `claude-haiku-4.5`, …) plus its own `auto` picker, and `kiro_default` / `kiro_planner` are its agents, so a Kiro entry naming any other model is rejected.
-- `effort` is optional and falls back to the task-kind default; an explicit `reasoning_effort` on the spawn still wins over both.
-- A configured Pi model draws on its own provider's allowance rather than the parent's — `github-copilot` against the Copilot window, `openai-codex` against the same ChatGPT window the Codex harness spends — and a model that is unavailable fails the spawn rather than falling back. The same GPT model is usually authenticated on both providers, so listing both gives Pi a fallback when one allowance runs down; note that the ChatGPT backend serves them with a smaller context window than Copilot does.
+```typescript
+subagents_list({});
+subagent({ agent: "scout", task: "Map the authentication flow" });
+subagent({ agent: "worker", name: "auth-fix", task: "Implement the agreed fix" });
+subagent_send({ name: "auth-fix", message: "Also cover expired tokens" });
+```
 
-Invalid entries are ignored and reported by `/subagents route`, which also lists the effective candidates per task kind. `subagent-routing.corporate.example.json` and `subagent-routing.personal.example.json` are templates; the active file is intentionally not tracked because the environment is machine-specific.
+`/subagent scout <task>` is the equivalent slash command. Results return asynchronously; the widget tracks running children. Persistent specialists and running native sessions accept follow-ups through `subagent_send`; completed native sessions can be continued with `subagent_resume`. Pi children contact their parent through `caller_ping`.
 
-Run `/subagents route` to inspect the effective environment, backend availability, cache freshness, shortest-window allowance, task-fit tiers, and effective decisions. Routing never blocks on a provider refresh and never retries a failed spawn on another harness. After first enabling the usage package, run `/usage refresh` if you want to prime the cache immediately. An explicit harness override is honored only when the user asks for it.
+Pi's startup default is set in `settings.json`. Personal profiles in `agents/` pin each role's model independently and are linked to `~/.pi/agent/agents`, overriding package defaults without modifying Pi's managed checkout. Their frontmatter is the source of truth for model and thinking level; the spawn's `model` argument can override the profile. Project-local `.pi/agents` definitions take precedence over these global profiles.
+
+These are complete personal profiles, not partial model-only overrides. Review package role changes when updating. Research tools use the already-installed `pi-web-access` package and its actual tool names, including `fetch_content`.
+
+### Operational notes
+
+- Pi-backed roles use authenticated Pi provider/model IDs. Roles with `cli: claude` or `cli: kiro` use the native harness lifecycle, correlated receipts, verified process ownership, exact-loadout resume, and bounded nested delegation.
+- Tool allowlists are capability selection, not an OS sandbox. Review project-local agent definitions before delegating in an unfamiliar repository.
+- Use ordinary panes for read-only or sequential work. Use a unique managed worktree for each parallel independent writer; the parent owns review, integration, and cleanup.
+- Existing handles and sessions from the deprecated local runtime or the previous package are not migrated into the new registry.
+
+Finish any running children before using `/reload` or restarting Pi. The currently open session retains its loaded tools until then. After reload, use `subagents_list` rather than `subagent_spawn`.
+
+## Deprecated implementation and rollback
+
+`extensions/subagents/` is **deprecated and disabled**, not deleted or moved. `settings.json` excludes `extensions/subagents/index.ts` so it cannot conflict with the replacement's subagent tools and commands. All existing uncommitted source and experimental relay work are preserved. The old routing examples and machine-local `~/.pi/agent/subagent-routing.json` remain intact but are unused by the replacement.
+
+Historical documentation is retained at [docs/deprecated-subagents.md](docs/deprecated-subagents.md); the old design vocabulary remains in `CONTEXT.md`.
+
+To roll back after finishing active children:
+
+1. Remove `git:github.com/zhengfran/pi-herdr-agents` from `settings.json`.
+2. Remove `-extensions/subagents/index.ts` from its `extensions` array.
+3. Restore the deterministic-routing guidance in `global-agents.md` if using that runtime again.
+4. Restart Pi or run `/reload`.
+
+Enable only one implementation at a time.
 
 ## Development
 
 ```bash
 npm run install:all
-npm run check
-npm test
-npm run format:check
+pi install git:github.com/zhengfran/pi-herdr-agents
+npm run check           # retained local extensions, including deprecated source
+npm test                # config/load regressions against the installed Git package
+npm run test:deprecated # retained headless runtime's offline suite
 ```
 
-External harness smoke tests are opt-in:
+The old paid/live harness tests remain opt-in via `npm run test:deprecated:live`. The experimental Linux isolation scripts remain available for the deprecated relay; they do not validate the active package.
+
+The replacement's unit tests and CI live in its own repository. To run them, use a separate development clone:
 
 ```bash
-npm run test:live
+git clone https://github.com/zhengfran/pi-herdr-agents.git
+cd pi-herdr-agents
+npm ci
+npm test
 ```
+
+Its `npm run test:integration` suite requires Herdr; live integration tests additionally require configured model access and may make model requests. Do not run development installs or edit source inside Pi's managed checkout.

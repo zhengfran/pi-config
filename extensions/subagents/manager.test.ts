@@ -260,6 +260,69 @@ test("idle restarts respect the concurrency cap", async () => {
   });
 });
 
+test("profiled instance ids are UUIDs and explicit aliases are group scoped", async () => {
+  await withManager(async (manager, runtime) => {
+    const profileLoadout = {
+      name: "reviewer",
+      profileHash: "test-hash",
+      roleText: "Review carefully.",
+      roleDelivery: "any" as const,
+      requiredCapabilities: [],
+      allowedRecipients: ["parent"],
+      groupId: "group-a",
+      trustedSource: "test",
+    };
+    const spawn = (groupId: string) =>
+      manager.spawn("codex", {
+        ...task("review"),
+        title: "reviewer",
+        profileLoadout: { ...profileLoadout, groupId },
+      });
+    const first = await runTool(runtime, spawn("group-a"));
+    assert.match(first.id, /^sa-[0-9a-f-]{36}$/);
+    assert.equal(first.meta.groupId, "group-a");
+    assert.equal(first.profileLoadout?.profileHash, "test-hash");
+    assert.equal(first.profileLoadout?.roleText, "Review carefully.");
+    const [duplicate, otherGroup] = await Promise.allSettled([
+      runTool(runtime, spawn("group-a")),
+      runTool(runtime, spawn("group-b")),
+    ]);
+    assert.equal(duplicate.status, "rejected");
+    if (duplicate.status === "rejected") {
+      assert.match(String(duplicate.reason), /already used/);
+    }
+    assert.equal(otherGroup.status, "fulfilled");
+  });
+});
+
+test("send to a busy headless child queues work without a second spawn", async () => {
+  await withManager(async (manager, runtime) => {
+    const snap = await runTool(
+      runtime,
+      manager.spawn("claude", task("First turn")),
+    );
+    await runTool(runtime, manager.send(snap.id, "Follow-up while busy"));
+    // waitFor can observe the first turn's settle before the queued follow-up
+    // starts; wait for the explicit second result, not just any settled state.
+    const deadline = Date.now() + 4_000;
+    while (
+      !manager.view.get(snap.id)?.finalText.includes("Follow-up while busy")
+    ) {
+      if (Date.now() > deadline)
+        throw new Error("Queued follow-up never settled");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const finished = manager.view.get(snap.id);
+    assert.equal(finished?.status, "done");
+    assert.ok(
+      finished?.transcript.some(
+        (item) =>
+          item.kind === "user" && item.text.includes("Follow-up while busy"),
+      ),
+    );
+  });
+});
+
 test("send steers an idle subagent into another turn", async () => {
   await withManager(async (manager, runtime) => {
     const snap = await runTool(

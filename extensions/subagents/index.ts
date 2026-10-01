@@ -24,6 +24,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import type { BackendName } from "./src/domain.ts";
+import { resolvePiModel } from "./src/backends/pi.ts";
+import {
+  profileCandidateModelEligible,
+  verifiedProfileHarnesses,
+} from "./src/profile-preflight.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
@@ -56,6 +64,17 @@ import {
 } from "./src/format.ts";
 import { SubagentManager, type SubagentManagerShape } from "./src/manager.ts";
 import {
+  normalizeSubagentMessage,
+  resolveMessageTarget,
+} from "./src/message-target.ts";
+import {
+  discoverAgentProfiles,
+  mergeRequiredAccess,
+  requireAgentProfile,
+  resolveProfileTaskKind,
+  type AgentProfile,
+} from "./src/profiles.ts";
+import {
   buildSubagentResultMessage,
   buildSubagentSpawnResult,
   SUBAGENT_CANCEL_PARAMETER_DESCRIPTIONS,
@@ -63,6 +82,7 @@ import {
   SUBAGENT_CHECK_PARAMETER_DESCRIPTIONS,
   SUBAGENT_CHECK_TOOL_DESCRIPTION,
   SUBAGENT_LIST_TOOL_DESCRIPTION,
+  SUBAGENT_MESSAGE_TOOL_DESCRIPTION,
   SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS,
   SUBAGENT_SPAWN_PROMPT_GUIDELINES,
   SUBAGENT_SPAWN_PROMPT_SNIPPET,
@@ -77,6 +97,7 @@ import {
   routeSubagent,
   routingDiagnosticLines,
   TASK_KINDS,
+  type TaskKind,
 } from "./src/routing.ts";
 import {
   createSubagentRuntime,
@@ -86,6 +107,24 @@ import {
 import { showRoutingDiagnostics } from "./src/ui/routing.ts";
 import { openSubagentPicker, openSubagentTakeover } from "./src/ui/takeover.ts";
 
+const execFileAsync = promisify(execFile);
+
+async function claudeLoginAvailable(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      "claude",
+      ["auth", "status", "--json"],
+      {
+        timeout: 3_000,
+        maxBuffer: 32_768,
+      },
+    );
+    return (JSON.parse(stdout) as { loggedIn?: unknown }).loggedIn === true;
+  } catch {
+    return false;
+  }
+}
+
 const SUBAGENT_OUTPUT_MAX_BYTES = 24 * 1024;
 const WAIT_OUTPUT_MAX_BYTES = 48 * 1024;
 const WAIT_PER_AGENT_MAX_BYTES = 16 * 1024;
@@ -94,6 +133,7 @@ const MANAGEMENT_TOOL_NAMES = [
   "subagent_cancel",
   "subagent_check",
   "subagent_list",
+  "subagent_message",
 ] as const;
 const MANAGEMENT_TOOL_NAME_SET = new Set<string>(MANAGEMENT_TOOL_NAMES);
 
@@ -138,6 +178,15 @@ function truncatedOutput(
  * is trusted only when pi's persisted trust store explicitly trusts it (or a
  * containing directory); unreadable/invalid trust data fails closed.
  */
+function hasPersistedProjectProfileTrust(cwd: string): boolean {
+  try {
+    const canonical = fs.realpathSync(cwd);
+    return new ProjectTrustStore(getAgentDir()).get(canonical) === true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveChildProjectTrust(options: {
   parentCwd: string;
   childCwd: string;
@@ -307,9 +356,17 @@ export default function (pi: ExtensionAPI) {
       name: Type.String({
         description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.name,
       }),
-      task_kind: StringEnum(TASK_KINDS, {
-        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.taskKind,
-      }),
+      agent: Type.Optional(
+        Type.String({
+          description:
+            "Optional name of a trusted versioned agent profile (not the child instance name). Without it, legacy spawn behavior is unchanged.",
+        }),
+      ),
+      task_kind: Type.Optional(
+        StringEnum(TASK_KINDS, {
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.taskKind,
+        }),
+      ),
       required_access: Type.Optional(
         Type.Array(StringEnum(CORPORATE_ACCESS_REQUIREMENTS), {
           uniqueItems: true,
@@ -343,6 +400,48 @@ export default function (pi: ExtensionAPI) {
           "model requires an explicit user-requested harness because model hints are harness-specific",
         );
       }
+      const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
+      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+        throw new Error(`working_dir is not a directory: ${cwd}`);
+      }
+      const agentName = params.agent?.trim();
+      if (params.agent !== undefined && !agentName) {
+        throw new Error("agent must name a nonempty profile.");
+      }
+      const resolution = agentName
+        ? await discoverAgentProfiles({
+            agentDir: getAgentDir(),
+            cwd,
+            projectTrusted: hasPersistedProjectProfileTrust(cwd),
+          })
+        : undefined;
+      let profile: AgentProfile | undefined;
+      if (resolution && agentName) {
+        try {
+          profile = requireAgentProfile(resolution, agentName);
+        } catch (error) {
+          const diagnostic = resolution.diagnostics
+            .map((item) => item.message)
+            .join("; ");
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}${diagnostic ? ` Diagnostics: ${diagnostic}` : ""}`,
+          );
+        }
+      }
+      const taskKind: TaskKind = profile
+        ? resolveProfileTaskKind(profile, params.task_kind)
+        : (params.task_kind ??
+          (() => {
+            throw new Error("task_kind is required without agent.");
+          })());
+      const requiredAccess = profile
+        ? mergeRequiredAccess(profile, params.required_access)
+        : params.required_access;
+      if (profile?.requires.length) {
+        throw new Error(
+          `No eligible harness for profile "${profile.name}": ${profile.requires.join(", ")} has no verified OS/filesystem/process boundary on this host. Tool allowlists are not a sandbox.`,
+        );
+      }
       const manager = await getManager();
       const [routingState, available] = await Promise.all([
         loadRoutingState({ agentDir: getAgentDir() }),
@@ -351,25 +450,120 @@ export default function (pi: ExtensionAPI) {
           interruptMessage: "Subagent routing aborted.",
         }),
       ]);
+      // Filter *candidates*, not merely harnesses: later Pi entries can use
+      // an unauthenticated provider despite an earlier valid Pi entry.
+      const claudeAuthenticated =
+        profile && available.has("claude")
+          ? await claudeLoginAvailable()
+          : false;
+      const profiledRoutingState =
+        profile && routingState.models?.[taskKind]
+          ? {
+              ...routingState,
+              models: {
+                ...routingState.models,
+                [taskKind]: routingState.models[taskKind]?.filter((entry) =>
+                  profileCandidateModelEligible(
+                    entry.harness,
+                    (params.harness === entry.harness
+                      ? params.model
+                      : undefined) ??
+                      profile.harness[entry.harness]?.model ??
+                      entry.model,
+                    ctx.modelRegistry,
+                    ctx.model
+                      ? { provider: ctx.model.provider, id: ctx.model.id }
+                      : undefined,
+                  ),
+                ),
+              },
+            }
+          : routingState;
+      const verifiedEligible = profile
+        ? verifiedProfileHarnesses({
+            profile,
+            taskKind,
+            state: routingState,
+            modelRegistry: ctx.modelRegistry,
+            inherited: ctx.model
+              ? { provider: ctx.model.provider, id: ctx.model.id }
+              : undefined,
+            explicitModel: params.model,
+            override: params.harness,
+            claudeAuthenticated,
+          })
+        : undefined;
+      if (
+        profile &&
+        (params.harness
+          ? !verifiedEligible?.has(params.harness)
+          : ![...verifiedEligible!].some((name) => available.has(name)))
+      ) {
+        const reason = profile.requires.length
+          ? `hard requirement ${profile.requires.join(", ")} lacks a verified boundary`
+          : params.harness === "codex"
+            ? "Codex native multi_agent cannot yet be disabled per child with proof"
+            : params.harness === "claude" && !claudeAuthenticated
+              ? "Claude login is missing or unverified"
+              : "profile harness/model mapping or authentication is not verified";
+        throw new Error(
+          `No eligible harness for profile "${profile.name}": ${reason}. Eligible authenticated candidates: ${[...verifiedEligible!].join(", ") || "none"}.`,
+        );
+      }
       const decision = routeSubagent(
         {
-          taskKind: params.task_kind,
-          requiredAccess: params.required_access,
+          taskKind,
+          requiredAccess,
           reasoningEffort: params.reasoning_effort,
           override: params.harness,
           available,
           parentProvider: ctx.model?.provider,
+          ...(profile
+            ? {
+                profile: {
+                  name: profile.name,
+                  ...(Object.keys(profile.harness).length
+                    ? {
+                        harnesses: Object.entries(profile.harness).map(
+                          ([harness, hint]) => ({
+                            harness: harness as BackendName,
+                            model: hint?.model,
+                            effort: hint?.effort,
+                          }),
+                        ),
+                      }
+                    : {}),
+                  requiresVerifiedEligibility: true,
+                },
+                verifiedEligible,
+              }
+            : {}),
         },
-        routingState,
+        profiledRoutingState,
       );
       const harness = decision.harness;
-
-      const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
-      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
-        throw new Error(`working_dir is not a directory: ${cwd}`);
+      const modelHint = params.model ?? decision.harnessModel;
+      if (profile && harness === "pi") {
+        resolvePiModel(
+          ctx.modelRegistry,
+          modelHint,
+          ctx.model
+            ? { provider: ctx.model.provider, id: ctx.model.id }
+            : undefined,
+        );
       }
-
+      if (profile && modelHint && harness !== "pi") {
+        throw new Error(
+          `Profiled ${harness} model hint "${modelHint}" cannot yet be authenticated before launch; refusing silent fallback.`,
+        );
+      }
       const title = params.name.trim().slice(0, 160) || "subagent";
+      const hint = profile?.harness[harness];
+      const childProjectTrusted = resolveChildProjectTrust({
+        parentCwd: ctx.cwd,
+        childCwd: cwd,
+        parentTrusted: ctx.isProjectTrusted(),
+      });
       const snap = await runTool(
         getRuntime(),
         manager.spawn(harness, {
@@ -377,15 +571,42 @@ export default function (pi: ExtensionAPI) {
           title,
           cwd,
           // An explicit hint wins; otherwise take the task kind's configured model.
-          model: params.model ?? decision.harnessModel,
+          model: modelHint,
           reasoningEffort: decision.reasoningEffort,
+          ...(profile
+            ? {
+                profileLoadout: {
+                  name: profile.name,
+                  profileHash: profile.contentHash,
+                  roleText: profile.roleBody,
+                  roleDelivery: profile.roleDelivery,
+                  ...(harness === "pi" && hint?.tools
+                    ? { tools: [...hint.tools] }
+                    : {}),
+                  ...(harness === "claude" && hint?.allowedTools
+                    ? { allowedTools: [...hint.allowedTools] }
+                    : {}),
+                  ...(harness === "claude" && hint?.disallowedTools
+                    ? { disallowedTools: [...hint.disallowedTools] }
+                    : {}),
+                  requiredCapabilities: [...profile.requires],
+                  allowedRecipients: [...profile.messageTo],
+                  groupId: ctx.sessionManager.getSessionId(),
+                  trustedSource: profile.sourcePath,
+                  harness,
+                  model: modelHint,
+                  effort: decision.reasoningEffort,
+                  cwd,
+                  projectTrusted: childProjectTrusted,
+                  deliveryChannel:
+                    harness === "codex" ? "developer" : "system_append",
+                  routingReason: decision.reason,
+                },
+              }
+            : {}),
           parent: {
             parentCwd: ctx.cwd,
-            projectTrusted: resolveChildProjectTrust({
-              parentCwd: ctx.cwd,
-              childCwd: cwd,
-              parentTrusted: ctx.isProjectTrusted(),
-            }),
+            projectTrusted: childProjectTrusted,
             inheritedModel: ctx.model
               ? { provider: ctx.model.provider, id: ctx.model.id }
               : undefined,
@@ -420,6 +641,55 @@ export default function (pi: ExtensionAPI) {
           model: snap.meta.modelLabel,
           reasoningEffort: decision.reasoningEffort,
           routing: decision,
+          ...(profile
+            ? {
+                profile: profile.name,
+                profileHash: profile.contentHash,
+                profileDiagnostics: resolution?.diagnostics,
+              }
+            : {}),
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "subagent_message",
+    label: "Message Subagent",
+    description: SUBAGENT_MESSAGE_TOOL_DESCRIPTION,
+    parameters: Type.Object({
+      target: Type.String({
+        description:
+          "Tracked instance id or unique name within this parent conversation",
+      }),
+      message: Type.String({
+        description: "Follow-up text for the same headless child conversation",
+      }),
+    }),
+    async execute(_toolCallId, params, signal) {
+      const manager = await getManager();
+      const text = normalizeSubagentMessage(params.message);
+      const snap = resolveMessageTarget(manager.view.list(), params.target);
+      const priorStatus = snap.status;
+      await runTool(getRuntime(), manager.send(snap.id, text), {
+        signal,
+        interruptMessage:
+          "Message submission interrupted; native delivery is unknown.",
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Submitted to ${priorStatus === "running" ? "running" : "settled"} local headless subagent ${snap.id} "${snap.title}". This is not a durable acceptance, native-delivery or processing receipt.`,
+          },
+        ],
+        details: {
+          id: snap.id,
+          submittedLocally: true,
+          priorStatus,
+          durable: false,
+          delivered: "unknown",
+          processed: "unknown",
         },
       };
     },

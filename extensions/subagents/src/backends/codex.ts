@@ -16,6 +16,7 @@ import type { Cause, Scope } from "effect";
 import { Effect, Queue, Stream } from "effect";
 import type { SubagentBackend, SubagentSession } from "../backend.ts";
 import type {
+  ProfileLoadout,
   ReasoningEffort,
   RunOutcome,
   SpawnTask,
@@ -205,6 +206,25 @@ function supportedCodexEffort(
 
 function textInput(text: string) {
   return { type: "text", text, text_elements: [] };
+}
+
+/**
+ * Pure builder for the `thread/start` params a profiled spawn adds; `{}` for
+ * a legacy unprofiled spawn.
+ *
+ * The role rides the app-server's dedicated `developerInstructions` field,
+ * which is additive alongside `baseInstructions`/the model's built-in
+ * instructions rather than replacing them, and never itself touches
+ * `approvalPolicy` or `sandbox` — there is no proven per-child Codex tool
+ * allowlist (profile-capability contract, Codex row), so a profile cannot
+ * silently escalate or narrow permissions through this field.
+ */
+export function profileThreadStartParams(
+  profileLoadout: ProfileLoadout | undefined,
+): { developerInstructions?: string } {
+  return profileLoadout
+    ? { developerInstructions: profileLoadout.roleText }
+    : {};
 }
 
 /**
@@ -905,6 +925,7 @@ const makeCodexSession = (
           sandbox: "danger-full-access",
           ephemeral: false,
           ...(task.model ? { model: task.model } : {}),
+          ...profileThreadStartParams(task.profileLoadout),
         });
       },
       catch: (error) => new SpawnError({ message: boundedError(error) }),

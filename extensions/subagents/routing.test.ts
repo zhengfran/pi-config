@@ -771,6 +771,219 @@ test("routing diagnostics show policy, quota, and effective decisions", () => {
   assert.match(output, /jira: kiro/);
 });
 
+test("a profile hint precedes the configured candidate and moves quota to its provider", () => {
+  // No profile: config's "openai-codex" model wins on codex's own quota.
+  const models = {
+    quick: [{ harness: "pi" as const, model: "openai-codex/gpt-5.6-luna" }],
+  };
+  const baseState = {
+    ...state("corporate", {
+      codex: quotaWindows("codex", [["weekly", 90]]),
+      copilot: quotaWindows("copilot", [["weekly", 5]]),
+    }),
+    models,
+  };
+  const request = {
+    taskKind: "quick" as const,
+    available: all,
+    parentProvider: "github-copilot",
+  };
+
+  const noProfile = routeSubagent(request, baseState);
+  assert.equal(noProfile.candidates[0]?.provider, "codex");
+
+  // A profile hint for the same harness swaps in "github-copilot" instead:
+  // quota must now be evaluated against copilot's own (nearly spent)
+  // allowance, not the configured model's provider.
+  const withProfile = routeSubagent(
+    {
+      ...request,
+      profile: {
+        name: "reviewer",
+        harnesses: [{ harness: "pi", model: "github-copilot/gpt-5.6-luna" }],
+      },
+    },
+    baseState,
+  );
+  assert.equal(withProfile.harness, "pi");
+  assert.equal(withProfile.harnessModel, "github-copilot/gpt-5.6-luna");
+  assert.equal(withProfile.candidates[0]?.provider, "copilot");
+  assert.equal(withProfile.profile, "reviewer");
+  assert.match(withProfile.reason, /profile "reviewer"/);
+});
+
+test("a profile hint applies even on the built-in task-fit tiers", () => {
+  const decision = routeSubagent(
+    {
+      taskKind: "code_research",
+      available: all,
+      parentProvider: "github-copilot",
+      profile: {
+        name: "researcher",
+        harnesses: [{ harness: "claude", effort: "low" }],
+      },
+    },
+    state("corporate", {}),
+  );
+  assert.equal(decision.harness, "claude");
+  assert.equal(decision.reasoningEffort, "low");
+  assert.match(decision.reason, /task-fit tier/);
+  assert.match(decision.reason, /profile "researcher"/);
+});
+
+test("a profile restricts the candidate pool to its listed harnesses", () => {
+  const decision = routeSubagent(
+    {
+      taskKind: "general",
+      available: all,
+      parentProvider: "github-copilot",
+      profile: {
+        name: "reviewer",
+        harnesses: [{ harness: "kiro" }],
+      },
+    },
+    state("corporate", {
+      claude: quota("claude", 90),
+      kiro: quota("kiro", 10),
+    }),
+  );
+  // claude would otherwise win on quota, but the profile excludes it.
+  assert.equal(decision.harness, "kiro");
+});
+
+test("an invalid profile model hint drops that harness rather than falling back silently", () => {
+  const decision = routeSubagent(
+    {
+      taskKind: "general",
+      available: all,
+      profile: {
+        name: "reviewer",
+        harnesses: [{ harness: "claude", model: "" }, { harness: "kiro" }],
+      },
+    },
+    state("corporate", {}),
+  );
+  assert.equal(decision.harness, "kiro");
+});
+
+test("an explicit user harness override fails when the profile does not make it eligible", () => {
+  assert.throws(
+    () =>
+      routeSubagent(
+        {
+          taskKind: "general",
+          override: "claude",
+          available: all,
+          profile: { name: "reviewer", harnesses: [{ harness: "kiro" }] },
+        },
+        state("corporate", {}),
+      ),
+    /not eligible for profile "reviewer"/,
+  );
+
+  // Listed by the profile but not caller-verified: still ineligible.
+  assert.throws(
+    () =>
+      routeSubagent(
+        {
+          taskKind: "general",
+          override: "claude",
+          available: all,
+          profile: {
+            name: "reviewer",
+            harnesses: [{ harness: "claude" }],
+            requiresVerifiedEligibility: true,
+          },
+        },
+        state("corporate", {}),
+      ),
+    /not eligible for profile "reviewer"/,
+  );
+
+  // Verified by the caller's own preflight: now eligible.
+  const verified = routeSubagent(
+    {
+      taskKind: "general",
+      override: "claude",
+      available: all,
+      profile: {
+        name: "reviewer",
+        harnesses: [{ harness: "claude" }],
+        requiresVerifiedEligibility: true,
+      },
+      verifiedEligible: new Set(["claude"]),
+    },
+    state("corporate", {}),
+  );
+  assert.equal(verified.harness, "claude");
+});
+
+test("caller-verified eligibility also gates the automatic (non-override) path", () => {
+  const decision = routeSubagent(
+    {
+      taskKind: "general",
+      available: all,
+      parentProvider: "github-copilot",
+      profile: {
+        name: "reviewer",
+        harnesses: [{ harness: "claude" }, { harness: "kiro" }],
+        requiresVerifiedEligibility: true,
+      },
+      verifiedEligible: new Set(["kiro"]),
+    },
+    state("corporate", {
+      claude: quota("claude", 90),
+      kiro: quota("kiro", 10),
+    }),
+  );
+  // Claude has the better quota but was never verified for this profile.
+  assert.equal(decision.harness, "kiro");
+});
+
+test("a profiled request needing corporate-only access is rejected, not routed to Kiro", () => {
+  assert.throws(
+    () =>
+      routeSubagent(
+        {
+          taskKind: "general",
+          requiredAccess: ["jira"],
+          available: all,
+          profile: { name: "reviewer" },
+        },
+        state("corporate", { kiro: quota("kiro", 90) }),
+      ),
+    /Profiled subagent request "reviewer".*Kiro-only/,
+  );
+
+  // The identical ad hoc (agent-less) request still reaches Kiro.
+  const adHoc = routeSubagent(
+    {
+      taskKind: "general",
+      requiredAccess: ["jira"],
+      available: all,
+    },
+    state("corporate", { kiro: quota("kiro", 90) }),
+  );
+  assert.equal(adHoc.harness, "kiro");
+});
+
+test("legacy requests without a profile are routed identically to before", () => {
+  const request = {
+    taskKind: "general" as const,
+    available: all,
+    parentProvider: "github-copilot",
+  };
+  const routingState = state("corporate", {
+    copilot: quota("copilot", 20),
+    claude: quota("claude", 80),
+    kiro: quota("kiro", 50),
+  });
+  const withoutProfileField = routeSubagent(request, routingState);
+  assert.equal(withoutProfileField.harness, "claude");
+  assert.equal(withoutProfileField.profile, undefined);
+  assert.doesNotMatch(withoutProfileField.reason, /profile/);
+});
+
 test("cache loader safely rejects stale, malformed, and insecure input", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "subagent-routing-bad-"));
   const agentDir = join(root, "agent");

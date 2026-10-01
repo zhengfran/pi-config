@@ -20,7 +20,11 @@
     "format": "prettier --write \"extensions/**/*.{ts,cjs}\" \"*.json\"",
     "format:check": "prettier --check \"extensions/**/*.{ts,cjs}\" \"*.json\"",
     "install:all": "npm install",
-    "test": "node --test --experimental-strip-types extensions/subagents/manager.test.ts extensions/subagents/result-delivery.test.ts extensions/subagents/context-usage.test.ts extensions/subagents/takeover.test.ts extensions/subagents/by-the-way.test.ts extensions/subagents/kiro.test.ts extensions/subagents/pi-model.test.ts extensions/subagents/routing.test.ts extensions/subagents/tool-call-timeout.test.ts",
-    "test:live": "node --test --experimental-strip-types extensions/subagents/claude.test.ts extensions/subagents/codex.test.ts extensions/subagents/kiro.live.test.ts"
+    "test": "npm run test:config",
+    "test:config": "node --test tests/subagent-config.test.ts",
+    "test:deprecated": "node --test --experimental-strip-types extensions/subagents/manager.test.ts extensions/subagents/message-target.test.ts extensions/subagents/profiles.test.ts extensions/subagents/profile-backends.test.ts extensions/subagents/profile-preflight.test.ts extensions/subagents/result-delivery.test.ts extensions/subagents/context-usage.test.ts extensions/subagents/takeover.test.ts extensions/subagents/by-the-way.test.ts extensions/subagents/kiro.test.ts extensions/subagents/pi-model.test.ts extensions/subagents/routing.test.ts extensions/subagents/tool-call-timeout.test.ts extensions/subagents/relay-ownership.test.ts extensions/subagents/relay-server.test.ts extensions/subagents/relay-store.test.ts extensions/subagents/relay-crash.test.ts extensions/subagents/relay-linux-sandbox.test.ts extensions/subagents/bridge-endpoint.test.ts",
+    "test:deprecated:live": "node --test --experimental-strip-types extensions/subagents/claude.test.ts extensions/subagents/codex.test.ts extensions/subagents/kiro.live.test.ts",
+    "test:isolation:linux": "sh scripts/linux-child-isolation-check.sh",
+    "test:security:linux": "node --experimental-strip-types scripts/linux-child-bridge-security-check.ts"
   }
 }

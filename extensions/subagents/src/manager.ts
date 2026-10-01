@@ -11,6 +11,7 @@
  * and issue fire-and-forget commands without touching the Effect runtime.
  */
 
+import { randomUUID } from "node:crypto";
 import {
   Context,
   Effect,
@@ -79,6 +80,7 @@ interface MutableSnapshot {
   title: string;
   prompt: string;
   cwd: string;
+  profileLoadout?: SpawnTask["profileLoadout"];
   status: SubagentStatus;
   createdAt: number;
   settledAt?: number;
@@ -190,6 +192,8 @@ const makeManager = Effect.gen(function* () {
   let modelCounter = 0;
   let btwCounter = 0;
   let reserved = 0;
+  /** Includes pending launches and settled profiled instances; names are not reused. */
+  const profiledAliases = new Set<string>();
   let disposed = false;
   let onSettled:
     ((snap: SubagentSnapshot, consumed: boolean) => void) | undefined;
@@ -420,6 +424,10 @@ const makeManager = Effect.gen(function* () {
 
   const spawn = (backendName: BackendName, task: SpawnTask) =>
     Effect.gen(function* () {
+      const alias = task.profileLoadout
+        ? `${task.profileLoadout.groupId}\0${task.title}`
+        : undefined;
+      let registered = false;
       // Reserve synchronously (before the first yield inside doSpawn) so
       // parallel tool calls cannot race past the global cap.
       yield* Effect.suspend(
@@ -434,6 +442,12 @@ const makeManager = Effect.gen(function* () {
               message: `Max ${MAX_RUNNING} subagents can run concurrently. Wait for one to finish before spawning another.`,
             });
           }
+          if (alias && profiledAliases.has(alias)) {
+            return new SpawnError({
+              message: `Agent instance name "${task.title}" is already used in this delegation group.`,
+            });
+          }
+          if (alias) profiledAliases.add(alias);
           reserved++;
           return Effect.void;
         },
@@ -466,8 +480,20 @@ const makeManager = Effect.gen(function* () {
 
         const origin = task.origin ?? "model";
         const id =
-          origin === "btw" ? `btw-${++btwCounter}` : `sa-${++modelCounter}`;
-        const meta = yield* session.meta;
+          origin === "btw"
+            ? `btw-${++btwCounter}`
+            : task.profileLoadout
+              ? `sa-${randomUUID()}`
+              : `sa-${++modelCounter}`;
+        const nativeMeta = yield* session.meta;
+        const meta: SubagentMeta = task.profileLoadout
+          ? {
+              ...nativeMeta,
+              profileName: task.profileLoadout.name,
+              profileHash: task.profileLoadout.profileHash,
+              groupId: task.profileLoadout.groupId,
+            }
+          : nativeMeta;
         const entry: Entry = {
           snapshot: {
             id,
@@ -476,6 +502,9 @@ const makeManager = Effect.gen(function* () {
             title: task.title,
             prompt: task.prompt,
             cwd: task.cwd,
+            ...(task.profileLoadout
+              ? { profileLoadout: task.profileLoadout }
+              : {}),
             status: "running",
             createdAt: Date.now(),
             meta,
@@ -491,6 +520,7 @@ const makeManager = Effect.gen(function* () {
           liveToolMap: new Map(),
         };
         entries.set(id, entry);
+        registered = true;
 
         // Pump: fold the event stream into the snapshot. Tied to the entry
         // scope, so closing the scope stops it. If the stream ends while the
@@ -519,6 +549,7 @@ const makeManager = Effect.gen(function* () {
         Effect.ensuring(
           Effect.sync(() => {
             reserved--;
+            if (alias && !registered) profiledAliases.delete(alias);
             notify();
           }),
         ),

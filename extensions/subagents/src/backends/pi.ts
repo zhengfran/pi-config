@@ -44,6 +44,7 @@ const CHILD_EXCLUDED_TOOL_NAMES = [
   "subagent_cancel",
   "subagent_check",
   "subagent_list",
+  "subagent_message",
   "workflow",
   "ask_user",
 ] as const;
@@ -118,13 +119,44 @@ export function resolvePiModel(
 
 // --- Child session helpers --------------------------------------------------
 
+/**
+ * Pure builder for the profiled role's `appendSystemPromptOverride`
+ * (undefined for an unprofiled/legacy spawn, which keeps
+ * `DefaultResourceLoader`'s normal APPEND_SYSTEM.md discovery untouched).
+ *
+ * A profiled spawn appends the profile's role text to whatever base
+ * append-system-prompt blocks the loader already discovered — it never
+ * replaces `base`, matching the SDK's "Option 2: Append instructions to the
+ * default prompt" custom-prompt example. `role_delivery: privileged_required`
+ * profiles rely on this channel existing; pi's CLI system-append flag is
+ * documented, so the role text always lands here rather than being
+ * downgraded to a task prefix.
+ */
+export function profileAppendSystemPromptOverride(
+  roleText: string | undefined,
+) {
+  return roleText
+    ? (base: readonly string[]) => [...base, roleText]
+    : undefined;
+}
+
 /** Load normal global/package resources and trust-gated project resources. */
-async function createChildResources(cwd: string, projectTrusted: boolean) {
+async function createChildResources(
+  cwd: string,
+  projectTrusted: boolean,
+  roleText?: string,
+) {
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir, {
     projectTrusted,
   });
-  const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+  const override = profileAppendSystemPromptOverride(roleText);
+  const loader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager,
+    ...(override ? { appendSystemPromptOverride: override } : {}),
+  });
   await loader.reload();
   return { loader, settingsManager };
 }
@@ -303,11 +335,17 @@ const makePiSession = (
     const thinkingLevel = (task.reasoningEffort ??
       task.parent.inheritedThinkingLevel) as ThinkingLevel | undefined;
 
+    // Additional tool narrowing only (see ProfileLoadout.tools): eligibility
+    // for a hard requirement like filesystem_read_only is decided upstream by
+    // the profile/routing preflight, never inferred here from the tool list.
+    const profileTools = task.profileLoadout?.tools;
+
     const session = yield* Effect.tryPromise({
       try: async () => {
         const { loader, settingsManager } = await createChildResources(
           task.cwd,
           task.parent.projectTrusted,
+          task.profileLoadout?.roleText,
         );
         const { session } = await createAgentSession({
           cwd: task.cwd,
@@ -316,6 +354,7 @@ const makePiSession = (
           resourceLoader: loader,
           model,
           thinkingLevel,
+          ...(profileTools ? { tools: [...profileTools] } : {}),
           excludeTools: [...CHILD_EXCLUDED_TOOL_NAMES],
         });
         // Start child extension session hooks/resources in headless mode.

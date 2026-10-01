@@ -24,6 +24,7 @@ import type { Cause, Scope } from "effect";
 import { Effect, Queue, Stream } from "effect";
 import type { SubagentBackend, SubagentSession } from "../backend.ts";
 import type {
+  ProfileLoadout,
   QueuedMessage,
   ReasoningEffort,
   RunOutcome,
@@ -162,6 +163,61 @@ function boundedError(error: unknown) {
     0,
     4_096,
   );
+}
+
+/**
+ * Pure builder for the `query()` options a profiled spawn adds on top of the
+ * legacy (unprofiled) options, which this returns `{}` for and leaves
+ * untouched.
+ *
+ * The role rides `systemPrompt`'s `preset` append: Claude Code's own default
+ * system prompt is kept and the role text is appended to it, never replacing
+ * it. `snapshot: true` records the rendered prompt once for the conversation
+ * so a later launch/resume of the same session cannot silently swap in
+ * different role text (the profile-capability contract's resolved-loadout
+ * requirement). SDK `tools` narrows the available built-ins; `allowedTools`
+ * alone only auto-approves them. These are defence-in-depth, not the `filesystem_read_only` boundary
+ * itself, which is verified upstream before this spawn is eligible.
+ */
+export function profileClaudeQueryOptions(
+  profileLoadout: ProfileLoadout | undefined,
+): {
+  systemPrompt?: {
+    type: "preset";
+    preset: "claude_code";
+    append: string;
+    snapshot: true;
+  };
+  tools?: string[];
+  allowedTools?: string[];
+  disallowedTools?: string[];
+} {
+  if (!profileLoadout) return {};
+  return {
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      append: profileLoadout.roleText,
+      snapshot: true,
+    },
+    // allowedTools alone only auto-approves: SDK `tools` actually restricts
+    // the available built-in set. This still is NOT an OS read-only boundary.
+    ...(profileLoadout.allowedTools
+      ? {
+          tools: [...profileLoadout.allowedTools],
+          allowedTools: [...profileLoadout.allowedTools],
+        }
+      : profileLoadout.tools
+        ? { tools: [...profileLoadout.tools] }
+        : {}),
+    ...(profileLoadout.disallowedTools
+      ? {
+          disallowedTools: [
+            ...new Set(["Agent", "Task", ...profileLoadout.disallowedTools]),
+          ],
+        }
+      : {}),
+  };
 }
 
 function singleLine(text: string) {
@@ -322,6 +378,7 @@ const makeClaudeSession = (
     };
 
     const claudeBinary = resolveClaudeBinary();
+    const profileLoadout = task.profileLoadout;
     const nativeQuery = yield* Effect.try({
       try: () =>
         query({
@@ -348,6 +405,7 @@ const makeClaudeSession = (
               : {}),
             ...(task.model ? { model: task.model } : {}),
             ...claudeEffortOptions(task.reasoningEffort),
+            ...profileClaudeQueryOptions(profileLoadout),
           },
         }),
       catch: (error) => new SpawnError({ message: boundedError(error) }),
