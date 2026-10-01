@@ -1,6 +1,5 @@
 ---
 name: scout
-model: openai-codex/gpt-6-luna
 description: Fast codebase recon — explores files, finds patterns, maps architecture
 tools: read, grep, find, ls
 spawning: false

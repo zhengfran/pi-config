@@ -1,6 +1,5 @@
 ---
 name: worker
-model: openai-codex/gpt-6.1-sol
 description: General-purpose worker — reads, writes, and edits code
 tools: read, write, edit, bash, web_search, fetch_content, get_search_content, source_check, subagent, subagents_list
 spawning: true

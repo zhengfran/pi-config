@@ -1,0 +1,9 @@
+{
+  "models": {
+    "agents": {
+      "scout": "openai-codex/gpt-6-luna",
+      "researcher": "openai-codex/gpt-6-luna",
+      "worker": "openai-codex/gpt-6.1-sol"
+    }
+  }
+}
