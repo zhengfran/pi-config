@@ -81,7 +81,7 @@
         {
           "agent": "worker",
           "harness": "pi",
-          "model": "openai-codex/gpt-6-sol",
+          "model": "openai-codex/gpt-6.1-sol",
           "thinking": "high"
         },
         {
@@ -150,7 +150,7 @@
         {
           "agent": "worker",
           "harness": "claude",
-          "model": "fable",
+          "model": "opus",
           "thinking": "xhigh"
         },
         {
