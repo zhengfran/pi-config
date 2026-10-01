@@ -76,25 +76,25 @@
       ]
     },
     "test": {
-      "description": "Write or extend tests and verify behavior",
+      "description": "Write or extend tests for a bounded behavior and report what they prove",
       "candidates": [
         {
-          "agent": "worker",
+          "agent": "tester",
           "harness": "pi",
           "model": "openai-codex/gpt-6.1-sol",
-          "thinking": "high"
+          "thinking": "medium"
         },
         {
-          "agent": "worker",
+          "agent": "tester",
           "harness": "claude",
           "model": "sonnet",
-          "thinking": "high"
+          "thinking": "medium"
         },
         {
-          "agent": "worker",
+          "agent": "tester",
           "harness": "kiro",
           "model": "claude-sonnet-5",
-          "thinking": "high"
+          "thinking": "medium"
         }
       ]
     },
