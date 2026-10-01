@@ -1,6 +1,5 @@
 # Working agreement
 
-- Do the work directly unless delegation provides clear leverage through parallelism, isolation, duration, or harness fit.
-- When delegating, classify the task accurately and let the deterministic router select the harness; pass a harness override only when the user explicitly requests one.
-- Keep delegated tasks self-contained and continue useful work while they run.
-- Follow the nearest project-level `AGENTS.md` or `CLAUDE.md` and the surrounding code conventions.
+- In a top-level session, delegate substantive research, implementation, test, and review jobs to named subagent roles; work directly only on trivial actions, user interaction, integration, and synthesis.
+- In a child session, do the assigned task yourself.
+- Use a role's own harness unless the user explicitly asks for another.

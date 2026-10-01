@@ -1,41 +1,4 @@
-# Dependencies
 node_modules/
-
-# Installed separately by zzc-skills; these links are machine-local
+# Per-project skill links installed by zzc-skills
 skills/
-
-# Downloaded/generated executables
-bin/
-
-# Pi runtime and private state
-sessions/
-run-history.jsonl
-auth.json
-trust.json
-models.json
-models-store.json
-subagent-routing.json
-pi-goal.json
-pi-goal-state.json
-npm/
-git/
-
-# settings.json is tracked on purpose: this repository is the portable
-# configuration linked at ~/.pi/agent; runtime and private state stay ignored.
-!settings.json
-
-# Environment variables and secrets
-.env
-.env.*
-*.pem
-*.key
-
-# Logs and temporary files
-*.log
-*.tmp
-*.swp
 .DS_Store
-
-# Local editor settings
-.vscode/
-.idea/

@@ -1,13 +1,13 @@
 {
   "theme": "github-dark-default",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
+  "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "high",
   "packages": [
-    "npm:pi-web-access@0.15.0",
-    "npm:nowledge-mem-pi",
+    "npm:nowledge-mem-pi@0.8.6",
     "git:github.com/zhengfran/pi-subscription-usage",
-    "npm:@narumitw/pi-goal@0.54.8"
+    "git:github.com/zhengfran/pi-herdr-agents",
+    "npm:pi-web-access@0.33.0"
   ],
   "markdown": {
     "mermaid": "final"
@@ -18,5 +18,5 @@
   },
   "showCacheMissNotices": true,
   "quietStartup": true,
-  "lastChangelogVersion": "0.87.0"
+  "lastChangelogVersion": "0.99.2"
 }
