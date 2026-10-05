@@ -5,14 +5,14 @@
       "candidates": [
         {
           "agent": "scout",
-          "harness": "pi",
-          "model": "openai-codex/gpt-6-luna",
+          "harness": "claude",
+          "model": "haiku",
           "thinking": "low"
         },
         {
           "agent": "scout",
-          "harness": "claude",
-          "model": "haiku",
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-luna",
           "thinking": "low"
         },
         {
@@ -51,14 +51,14 @@
       "candidates": [
         {
           "agent": "worker",
-          "harness": "pi",
-          "model": "openai-codex/gpt-6.1-sol",
+          "harness": "claude",
+          "model": "sonnet",
           "thinking": "medium"
         },
         {
           "agent": "worker",
-          "harness": "claude",
-          "model": "sonnet",
+          "harness": "pi",
+          "model": "openai-codex/gpt-6.1-sol",
           "thinking": "medium"
         },
         {
@@ -80,14 +80,14 @@
       "candidates": [
         {
           "agent": "tester",
-          "harness": "pi",
-          "model": "openai-codex/gpt-6.1-sol",
+          "harness": "claude",
+          "model": "sonnet",
           "thinking": "medium"
         },
         {
           "agent": "tester",
-          "harness": "claude",
-          "model": "sonnet",
+          "harness": "pi",
+          "model": "openai-codex/gpt-6.1-sol",
           "thinking": "medium"
         },
         {
@@ -103,14 +103,14 @@
       "candidates": [
         {
           "agent": "reviewer",
-          "harness": "pi",
-          "model": "openai-codex/gpt-6-astra",
+          "harness": "claude",
+          "model": "opus",
           "thinking": "high"
         },
         {
           "agent": "reviewer",
-          "harness": "claude",
-          "model": "opus",
+          "harness": "pi",
+          "model": "openai-codex/gpt-6-astra",
           "thinking": "high"
         },
         {
