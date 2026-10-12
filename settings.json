@@ -6,7 +6,6 @@
   "packages": [
     "npm:nowledge-mem-pi@0.8.6",
     "git:github.com/zhengfran/pi-subscription-usage",
-    "git:github.com/zhengfran/pi-herdr-agents",
     "npm:pi-web-access@0.33.0"
   ],
   "markdown": {
@@ -18,5 +17,5 @@
   },
   "showCacheMissNotices": true,
   "quietStartup": true,
-  "lastChangelogVersion": "1.0.0"
+  "lastChangelogVersion": "1.1.0"
 }
