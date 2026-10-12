@@ -2,3 +2,8 @@ node_modules/
 # Per-project skill links installed by zzc-skills
 skills/
 .DS_Store
+
+/.pi/skills
+/.claude/skills
+/.codex/skills
+/.kiro/skills
