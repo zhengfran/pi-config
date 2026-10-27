@@ -22,6 +22,54 @@ Skills are managed by [`zzc-skills`](https://github.com/zhengfran/zzc-skills).
 
 The former headless subagent runtime lives on the `archive/headless-subagents` branch.
 
+## DeepSeek Harness delegation over ACP
+
+`bin/dsh-acp.mjs` connects `pi-subagents`' generic command runner to DSH's ACP
+stdio server. It adds no separate Pi tool. Install dependencies with `npm install`.
+
+Machine-specific launch configuration stays outside this repository in
+`~/.pi/agent/dsh-acp.json` (`PI_CODING_AGENT_DIR` is respected):
+
+```json
+{
+  "command": "/absolute/path/to/node",
+  "args": ["/absolute/path/to/dsh/lib/bin.js", "--profile", "acp"]
+}
+```
+
+Create a machine-local `~/.pi/agent/agents/dsh.md` using the paths on that machine:
+
+```markdown
+---
+name: dsh
+description: Delegate a self-contained task to DeepSeek Harness over ACP
+runner:
+  type: external-cli
+  command: /absolute/path/to/node
+  args: [/absolute/path/to/dotconfig/tools/ai/pi/bin/dsh-acp.mjs]
+  promptDelivery: stdin
+async: true
+systemPromptMode: replace
+inheritProjectContext: true
+inheritGlobalContext: false
+inheritSkills: false
+---
+
+Complete only the supplied task. Do not commit, publish, or delegate without
+explicit authorization. Report denied permissions rather than bypassing them.
+```
+
+For the default `deepseek-official` route, supply `DEEPSEEK_API_KEY` through
+DSH's local credential store or the environment inherited by Pi. Never put keys
+in this repository. A missing credential fails the delegated run explicitly.
+
+After `/reload`, ask Pi to delegate to `dsh`. The server uses its own configured
+model, credentials, tools, and sandbox policy; this does not reproduce DSH-TUI's
+presets. Each call creates a fresh ACP session. Permission requests are denied,
+not auto-approved. Stop/cancellation is process-owned by `pi-subagents`; live
+steering and session resume are not supported by this command-runner bridge.
+Do not pass native Pi child tool/model/fork options to this external agent.
+
 ## Development
 
 ```bash

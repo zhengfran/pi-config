@@ -1,12 +1,44 @@
 {
-  "theme": "github-dark-default",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "high",
+  "theme": "gruvbox-dark",
+  "defaultProvider": "openai",
+  "defaultModel": "gpt-6.1-sol",
+  "defaultThinkingLevel": "medium",
+  "subagents": {
+    "agentScanDirs": ["~/dotconfig/tools/ai/pi/agents"],
+    "agentOverrides": {
+      "scout": {
+        "model": "openai/gpt-6-luna",
+        "thinking": "high"
+      },
+      "researcher": {
+        "model": "openai/gpt-6-luna",
+        "thinking": "high"
+      },
+      "oracle": {
+        "model": "claude-opus-5.5",
+        "thinking": "high"
+      },
+      "worker": {
+        "model": "openai/gpt-6.1-sol",
+        "thinking": "high"
+      },
+      "reviewer": {
+        "model": "openai/gpt-6-astra",
+        "thinking": "high"
+      },
+      "delegate": {
+        "model": "openai/gpt-6.1-sol",
+        "thinking": "high"
+      }
+    }
+  },
   "packages": [
-    "npm:nowledge-mem-pi@0.8.6",
+    "npm:nowledge-mem-pi",
     "git:github.com/zhengfran/pi-subscription-usage",
-    "npm:pi-web-access@0.33.0"
+    "npm:pi-web-access",
+    "npm:pi-subagents",
+    "npm:@ff-labs/pi-fff",
+    "npm:billion-context"
   ],
   "markdown": {
     "mermaid": "final"
@@ -17,5 +49,6 @@
   },
   "showCacheMissNotices": true,
   "quietStartup": true,
-  "lastChangelogVersion": "1.1.0"
+  "lastChangelogVersion": "1.4.0",
+  "deviceId": "e367ca4b-d72c-423d-a669-56f66851c75e"
 }
