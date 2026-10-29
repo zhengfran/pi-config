@@ -41,7 +41,8 @@
     "npm:pi-subagents",
     "npm:@ff-labs/pi-fff",
     "npm:billion-context",
-    "git:github.com/zhengfran/pi-btw"
+    "git:github.com/zhengfran/pi-btw",
+    "npm:pi-context-view"
   ],
   "markdown": {
     "mermaid": "final"
