@@ -4,7 +4,9 @@
   "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "medium",
   "subagents": {
-    "agentScanDirs": ["~/dotconfig/tools/ai/pi/agents"],
+    "agentScanDirs": [
+      "~/dotconfig/tools/ai/pi/agents"
+    ],
     "agentOverrides": {
       "scout": {
         "model": "openai/gpt-6-luna",
@@ -38,7 +40,8 @@
     "npm:pi-web-access",
     "npm:pi-subagents",
     "npm:@ff-labs/pi-fff",
-    "npm:billion-context"
+    "npm:billion-context",
+    "git:github.com/zhengfran/pi-btw"
   ],
   "markdown": {
     "mermaid": "final"
@@ -50,5 +53,6 @@
   "showCacheMissNotices": true,
   "quietStartup": true,
   "lastChangelogVersion": "1.4.0",
-  "deviceId": "e367ca4b-d72c-423d-a669-56f66851c75e"
+  "deviceId": "e367ca4b-d72c-423d-a669-56f66851c75e",
+  "hideThinkingBlock": false
 }
